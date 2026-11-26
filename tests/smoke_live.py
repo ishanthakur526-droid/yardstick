@@ -11,12 +11,18 @@ import sys
 from playwright.sync_api import sync_playwright
 
 SECTIONS = {
+    "Home": [
+        "What each decision would have been worth",
+        "What the stock report misses",
+        "Monday's list",
+        "Download Monday's list (CSV)",
+    ],
     "See it": ["Arrived from vendors", "Where it piled up", "items at a glance"],
     "Plan it": [
         "Average idle stock",
         "What the planner says, one month at a time",
         "Download the plan (Excel)",
-        "What the saving depends on",
+        "What each lever is worth",
         "How good is the forecast?",
     ],
     "Requisition": [
@@ -41,12 +47,12 @@ def main(url: str, mobile: bool) -> int:
         target = url.rstrip("/") + "/~/+/" if "streamlit.app" in url and "/~/+/" not in url else url
         page.goto(target, wait_until="domcontentloaded", timeout=120000)
         try:
-            page.wait_for_selector('[data-testid="stMetric"]', timeout=180000)
+            page.get_by_text("What the stock report misses").first.wait_for(timeout=180000)
         except Exception:
             failures.append("the first screen never finished loading (or the app asked for a sign-in)")
         page.wait_for_timeout(4000)  # the lower parts of the first screen draw after the first numbers
         body = page.inner_text("body")
-        for must in ("Yardstick", "of 16 items", "48,991"):
+        for must in ("Yardstick", "All 16 items", "29,572"):  # Kanpur: poles' average idle stock, really
             if must not in body:
                 failures.append(f"first screen is missing: {must!r}")
         for bad in ("Traceback", "This app has no project data", "Sign in", "You do not have access"):
@@ -54,7 +60,7 @@ def main(url: str, mobile: bool) -> int:
                 failures.append(f"first screen shows: {bad!r}")
 
         for name, expected in SECTIONS.items():
-            if name != "See it":
+            if name != "Home":
                 page.locator('[data-testid="stButtonGroup"] button', has_text=name).first.click()
                 try:
                     page.wait_for_selector('[data-testid="stStatusWidget"]', state="detached", timeout=60000)
