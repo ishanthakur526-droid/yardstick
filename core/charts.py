@@ -218,7 +218,13 @@ def lever_waterfall(rows: pd.DataFrame, unit: str, decimals: int = 0) -> go.Figu
     """Average idle stock: what really happened, then what each lever adds or takes away."""
     from .fmt import indian
 
-    labels = [str(lab).replace(" (", "<br>(") for lab in rows["label"]]
+    labels = [  # short lines, so the labels stay level on a phone
+        str(lab)
+        .replace(" (", "<br>(")
+        .replace("Order by use", "Order<br>by use")
+        .replace("+ contractor cover", "+ cover")
+        for lab in rows["label"]
+    ]
     first = float(rows["avg_idle"].iloc[0])
     y = [first] + [float(v) for v in rows["change"].iloc[1:]]
     text = [indian(first, decimals)]
@@ -245,6 +251,7 @@ def lever_waterfall(rows: pd.DataFrame, unit: str, decimals: int = 0) -> go.Figu
     )
     top = float(max(rows["avg_idle"].max(), first)) * 1.28
     fig.update_yaxes(range=[0, top], title=f"average idle stock ({unit})")
+    fig.update_xaxes(tickangle=0)
     fig = _base(fig, 420)
     fig.update_layout(margin=dict(l=8, r=8, t=16, b=8), showlegend=False, hovermode=False)
     return fig

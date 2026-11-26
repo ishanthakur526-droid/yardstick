@@ -11,6 +11,7 @@ from core.dataset import Dataset
 from core.fmt import month_label, short_item
 from core.safe import csv_bytes, md
 from ui.common import XLSX, qty
+from ui.state import k
 
 
 def example_quantity(ds: Dataset) -> int:
@@ -44,7 +45,7 @@ def render(ds: Dataset) -> None:
             max_value=5_000_000,
             value=example,
             step=100,
-            key="boq_anchor",
+            key=k("boq_anchor"),
             help=f"{example:,} is an example to start from. Type the real number from the tender.",
         )
     days_left = b2.number_input(
@@ -53,7 +54,7 @@ def render(ds: Dataset) -> None:
         max_value=720,
         value=90,
         step=7,
-        key="boq_days",
+        key=k("boq_days"),
         help="Each item's usual lead time is taken off this to give its order-by date.",
     )
     handoff = b3.number_input(
@@ -62,7 +63,7 @@ def render(ds: Dataset) -> None:
         max_value=30,
         value=7,
         step=1,
-        key="boq_handoff",
+        key=k("boq_handoff"),
         help="Procurement teams typically need 7 to 10 days. The list must reach them this long before the "
         "order-by date.",
     )
@@ -81,7 +82,7 @@ def render(ds: Dataset) -> None:
             grid,
             hide_index=True,
             disabled=["Item", "Unit"],
-            key="boq_lines",
+            key=k("boq_lines"),
             column_config={
                 "BOQ quantity": st.column_config.NumberColumn(
                     min_value=0, help="Leave empty when the BOQ has no such line."
@@ -91,7 +92,7 @@ def render(ds: Dataset) -> None:
         sheet = st.file_uploader(
             "…or upload the BOQ (CSV or Excel with an item column and a quantity column)",
             type=["csv", "xlsx"],
-            key="boq_file",
+            key=k("boq_file"),
         )
         template = (
             ledger.items[["item_code", "item_name", "unit"]]
@@ -125,18 +126,18 @@ def render(ds: Dataset) -> None:
             list(reqs.BASES),
             format_func=reqs.BASES.get,
             horizontal=True,
-            key="boq_basis",
+            key=k("boq_basis"),
             help="The master data file and the site's real use often disagree (see Match the sets). Both are shown "
             "below whichever you pick.",
         )
         per_anchor = st.checkbox(
             f"Estimate every other item from what this project used per {md(cfg.anchor_noun)}",
             value=bool(anchor),
-            key="boq_per_anchor",
+            key=k("boq_per_anchor"),
             disabled=not anchor,
             help=f"Only for items the BOQ does not list, and only when {md(noun)} are on the BOQ.",
         )
-        held = st.checkbox("Count stock still with contractors as available", value=False, key="boq_held")
+        held = st.checkbox("Count stock still with contractors as available", value=False, key=k("boq_held"))
 
     req = reqs.requisition(
         ledger,

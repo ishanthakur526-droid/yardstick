@@ -21,6 +21,13 @@ def run(section: str, dataset: str, custom=None) -> AppTest:
     return at
 
 
+def widget(at: AppTest, name: str):
+    """A widget's value: keys carry the project's fingerprint (see ui/state.k)."""
+    keys = [key for key in at.session_state.keys() if str(key).startswith(name + "@")]
+    assert len(keys) == 1, keys
+    return at.session_state[keys[0]]
+
+
 def assert_clean(at: AppTest) -> None:
     assert not at.exception, [e.value for e in at.exception]
     assert not at.error, [e.value for e in at.error]
@@ -55,7 +62,8 @@ def test_switching_projects_forgets_the_last_projects_choices(minimal_ds):
     at.session_state["dataset"] = "sample"
     at.session_state["section"] = "See it"
     at.run()
-    assert at.session_state["see_item"] == "SPO001"
+    assert widget(at, "see_item") == "SPO001"
     at.radio(key="dataset").set_value("custom").run()  # the visitor picks another project in the sidebar
     assert_clean(at)
-    assert at.session_state["see_item"] in {"A100", "B200", "C300"}
+    assert widget(at, "see_item") in {"A100", "B200", "C300"}
+    assert len([key for key in at.session_state.keys() if str(key).startswith("see_item@")]) == 1

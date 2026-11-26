@@ -10,8 +10,8 @@ from core.dataset import Dataset
 from core.fmt import indian, month_label, short_item
 from core.planner import DEFAULT_COVER_WEEKS, MAX_SHORTAGE_SHARE, Settings, counts
 from core.safe import csv_bytes, file_part, md
-from ui.common import XLSX, lever_rows_table, number_columns
-from ui.state import planner_limits, run_all, run_levers, run_replay
+from ui.common import XLSX, lever_rows_table, number_columns, tiles
+from ui.state import k, planner_limits, run_all, run_levers, run_replay
 
 
 def render(ds: Dataset) -> None:
@@ -29,7 +29,7 @@ def render(ds: Dataset) -> None:
         codes,
         index=codes.index(cfg.anchor_code) if cfg.anchor_code in codes else 0,
         format_func=lambda c: f"{short_item(names[c])}  ·  {ledger.unit(c)}",
-        key="plan_item",
+        key=k("plan_item"),
     )
     low, high, start = planner_limits(ds)
     with st.expander("Planner settings"):
@@ -42,7 +42,7 @@ def render(ds: Dataset) -> None:
                 8,
                 int(DEFAULT_COVER_WEEKS),
                 help="How much forecast use contractors may hold at month end. 0: they get exactly what the site uses.",
-                key="plan_cover",
+                key=k("plan_cover"),
             )
         )
         capped = s5.toggle(
@@ -50,7 +50,7 @@ def render(ds: Dataset) -> None:
             value=True,
             help="Never order more in total than the bill of quantities (or what was really bought, when the data has "
             "no BOQ).",
-            key="plan_boq",
+            key=k("plan_boq"),
         )
         if high > low:
             takeover = s1.slider(
@@ -59,12 +59,12 @@ def render(ds: Dataset) -> None:
                 high,
                 start,
                 help="A forecast needs history. Until then the project runs on what really arrived.",
-                key="plan_takeover",
+                key=k("plan_takeover"),
             )
         else:
             takeover = start
             s1.caption(f"The project is short, so the planner takes over after {takeover} months.")
-        window = s2.slider("Months of use the forecast averages", 3, 12, Settings().window, key="plan_window")
+        window = s2.slider("Months of use the forecast averages", 3, 12, Settings().window, key=k("plan_window"))
         safety = s3.slider(
             "Safety margin (standard deviations)",
             0.0,
@@ -72,17 +72,17 @@ def render(ds: Dataset) -> None:
             Settings().safety,
             0.1,
             help="Higher means fewer shortages and more idle stock.",
-            key="plan_safety",
+            key=k("plan_safety"),
         )
 
     with st.expander("No spare stock: what would that cost on a continuous plan?"):
         trade = []
-        for label, k in (
+        for label, margin in (
             ("No spare stock (0)", 0.0),
             ("Light cushion (1.0)", 1.0),
             (f"This screen's setting ({safety:.2f})", safety),
         ):
-            d = run_all(fp, ds, takeover, window, k, capped, cover)
+            d = run_all(fp, ds, takeover, window, margin, capped, cover)
             ok_ = d[d["counts"]]
             trade.append(
                 {
@@ -110,7 +110,7 @@ def render(ds: Dataset) -> None:
         f"Scored from {month_label(s['eval_from'])}, the first month the planner's own orders could land "
         f"(lead time {r.lead_months} months)."
     )
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5 = tiles("tiles_plan")
     m1.metric(
         "Average idle stock",
         f"{indian(s['avg_plan'])} {unit}",
@@ -151,7 +151,7 @@ def render(ds: Dataset) -> None:
     if pd.notna(s["forecast_error"]):
         st.caption(
             f"Forecast check: over the {s['span_months']} months an order has to cover, the forecast was off by "
-            f"{s['forecast_error']:.0%} of what the site really used ({'high' if s['forecast_bias'] > 0 else 'low'} by "
+            f"{s['forecast_error']:.0%} of real demand on the godowns ({'high' if s['forecast_bias'] > 0 else 'low'} by "
             f"{abs(s['forecast_bias']):.0%} overall). The site was fully supplied in {s['months_served']} of "
             f"{s['eval_months']} scored months."
         )
@@ -162,7 +162,7 @@ def render(ds: Dataset) -> None:
     peak_month = s["peak_real_month"] if s["peak_real_month"] in planning_months else planning_months[0]
     if len(planning_months) > 1:
         month = st.select_slider(
-            "Month", options=planning_months, value=peak_month, format_func=month_label, key="plan_month"
+            "Month", options=planning_months, value=peak_month, format_func=month_label, key=k("plan_month")
         )
     else:
         month = planning_months[0]
@@ -304,9 +304,10 @@ def _forecast_check(everything: pd.DataFrame, window: int) -> None:
     served, scored = int(fc["months_served"].sum()), int(fc["eval_months"].sum())
     lean = float(fc["forecast_bias"].median())
     st.markdown(
-        "At the start of each scored month the planner forecasts use. That forecast is then checked against what the "
-        "site really used over the months an order has to cover (the lead time plus one). Across the "
-        f"{len(fc)} items it was off by a median **{fc['forecast_error'].median():.0%}** of real use and ran "
+        "At the start of each scored month the planner forecasts demand on the godowns. That forecast is then checked against "
+        "real demand (what the site used, plus any top-up of contractors' cover) over the months an order has to cover "
+        f"(the lead time plus one). Across the {len(fc)} items it was off by a median "
+        f"**{fc['forecast_error'].median():.0%}** of real demand and ran "
         f"{'high' if lean > 0 else 'low'} by a median **{abs(lean):.0%}**. It leans high on purpose: it takes the higher "
         f"of the last 3 and last {window} months' average, so one quiet month does not starve the site. With that "
         f"cushion the site was fully supplied in **{served} of {scored}** item-months ({served / max(scored, 1):.0%})."

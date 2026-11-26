@@ -61,6 +61,13 @@ def choose() -> Dataset:
     return ds
 
 
+def k(name: str) -> str:
+    """A widget key for one project. Each project gets its own widgets, so a choice list from the last project is never
+    left on screen after switching (the browser would keep showing the old label). Old keys share the name's prefix and
+    are cleared by `choose()`."""
+    return f"{name}@{str(st.session_state.get('_shown', ''))[:8]}"
+
+
 def planner_limits(ds: Dataset) -> tuple[int, int, int]:
     """Bounds for the 'months on the original plan' slider: a forecast needs history, and a score needs months after."""
     n = len(ds.ledger.months)

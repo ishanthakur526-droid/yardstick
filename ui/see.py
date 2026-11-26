@@ -10,7 +10,8 @@ from core.dataset import Dataset
 from core.fmt import indian, month_label, short_item
 from core.ledger import item_grid, item_site, ledger_table, overview, peak_idle
 from core.safe import csv_bytes, file_part, md
-from ui.common import ALL_GODOWNS, number_columns
+from ui.common import ALL_GODOWNS, number_columns, tiles
+from ui.state import k
 
 
 def render(ds: Dataset) -> None:
@@ -26,11 +27,11 @@ def render(ds: Dataset) -> None:
         codes,
         index=codes.index(default_code),
         format_func=lambda c: f"{short_item(names[c])}  ·  {ledger.unit(c)}",
-        key="see_item",
+        key=k("see_item"),
     )
     places = [ALL_GODOWNS] + list(ledger.godowns)
     place = pick_b.selectbox(
-        "Godown", places, format_func=lambda g: g if g == ALL_GODOWNS else ledger.label(g), key="see_place"
+        "Godown", places, format_func=lambda g: g if g == ALL_GODOWNS else ledger.label(g), key=k("see_place")
     )
 
     unit, dec = ledger.unit(code), ledger.decimals(code)
@@ -47,13 +48,7 @@ def render(ds: Dataset) -> None:
         f"contractors) while the site used **{indian(at_peak['used'])}** that month{cover_text}."
     )
 
-    # Five tiles in a row: a seven-digit quantity plus its unit must not be cut off with "…" on a laptop screen.
-    st.markdown(
-        "<style>[data-testid='stMetricValue'], [data-testid='stMetricValue'] * "
-        "{font-size: clamp(1.25rem, 1.75vw, 2.25rem) !important;}</style>",
-        unsafe_allow_html=True,
-    )
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k4, k5 = tiles("tiles_see")
     k1.metric("Arrived from vendors", f"{indian(row['received'])} {unit}", border=True)
     k2.metric("Actually used", f"{indian(row['used'])} {unit}", border=True)
     last = site.iloc[-1]

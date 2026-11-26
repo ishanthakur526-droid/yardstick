@@ -10,7 +10,7 @@ from core import sets as setcheck
 from core.dataset import Dataset
 from core.fmt import indian, month_label, short_item
 from core.safe import csv_bytes, file_part
-from ui.state import run_balance, run_calibration
+from ui.state import k, run_balance, run_calibration
 
 
 def render(ds: Dataset) -> None:
@@ -56,12 +56,12 @@ def render(ds: Dataset) -> None:
     parents = list(dict.fromkeys(cal["parent_code"]))
     pnames = dict(zip(cal["parent_code"], cal["parent_name"]))
     c1, c2, c3 = st.columns([3, 2, 2])
-    parent = c1.selectbox("Set", parents, format_func=lambda p: short_item(pnames[p], 60), key="set_parent")
-    basis_label = c2.radio("Ratio to use", ["From real use", "As the file gives it"], key="set_basis")
+    parent = c1.selectbox("Set", parents, format_func=lambda p: short_item(pnames[p], 60), key=k("set_parent"))
+    basis_label = c2.radio("Ratio to use", ["From real use", "As the file gives it"], key=k("set_basis"))
     loose = c3.checkbox(
         "Also judge loosely paired items",
         value=False,
-        key="set_loose",
+        key=k("set_loose"),
         help="Children whose use only loosely follows the parent's. Expect many flags. Items that several sets share "
         "are never judged set by set.",
     )
@@ -120,7 +120,9 @@ def _judged(ds: Dataset, view, judged_children: list[str], parent: str) -> None:
         f"or more of all sets issued so far. Watch: {setcheck.WATCH:.0%} or more."
     )
 
-    child = st.selectbox("Child", judged_children, format_func=lambda c: short_item(view.names[c], 60), key="set_child")
+    child = st.selectbox(
+        "Child", judged_children, format_func=lambda c: short_item(view.names[c], 60), key=k("set_child")
+    )
     st.plotly_chart(
         charts.set_account(
             view.account[view.account["child"] == child],
@@ -161,7 +163,7 @@ def _judged(ds: Dataset, view, judged_children: list[str], parent: str) -> None:
         options=ledger.months,
         value=ledger.months[len(ledger.months) // 2],
         format_func=month_label,
-        key="set_month",
+        key=k("set_month"),
     )
     snap = setcheck.stuck(view, pick)
     checked = [m for m in view.members if m == view.parent or (view.judged or {}).get(m)]

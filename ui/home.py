@@ -14,7 +14,7 @@ from core.misses import closing_store, contractor_stock, contractor_stock_all, r
 from core.planner import DEFAULT_COVER_WEEKS, MAX_SHORTAGE_SHARE, Settings
 from core.safe import csv_bytes, md
 from ui.common import lever_rows_table
-from ui.state import planner_limits, run_calibration, run_levers, run_week
+from ui.state import k, planner_limits, run_calibration, run_levers, run_week
 
 
 def render(ds: Dataset) -> None:
@@ -37,20 +37,20 @@ def render(ds: Dataset) -> None:
         codes,
         index=codes.index(anchor),
         format_func=lambda c: f"{short_item(names[c])}  ·  {ledger.unit(c)}",
-        key="home_item",
+        key=k("home_item"),
     )
     weeks = c2.slider(
         "Contractor cover (weeks)",
         0,
         8,
         int(DEFAULT_COVER_WEEKS),
-        key="home_cover",
+        key=k("home_cover"),
         help="How much forecast use contractors may hold at month end. 0: they get exactly what the site uses.",
     )
     boq_cap = c3.toggle(
-        "Cap buying at the BOQ",
+        "BOQ cap",
         value=True,
-        key="home_boq",
+        key=k("home_boq"),
         help="Never order more in total than the bill of quantities.",
     )
     tables = run_levers(fp, ds, base.takeover, base.window, base.safety, float(weeks), boq_cap)
@@ -79,6 +79,10 @@ def render(ds: Dataset) -> None:
 
     st.subheader("Monday's list")
     _monday(ds, rows, base.takeover, float(weeks), boq_cap)
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
 
 def _headline(rows: pd.DataFrame, unit: str, dec: int, name: str) -> None:
@@ -180,7 +184,10 @@ def _misses(ds: Dataset, anchor: str) -> None:
                     f"the file says {w['stated']:g}, the site used about {w['observed']:.2f} ({w['factor']:.0f}×)."
                 )
             if gaps["unit_suspect"]:
-                text += f" {gaps['unit_suspect']} more look like a unit mismatch."
+                text += (
+                    f" Of those, {gaps['unit_suspect']} look{'s' if gaps['unit_suspect'] == 1 else ''} like a unit "
+                    "mismatch (the part counted in another unit) rather than a wrong count."
+                )
             st.markdown(text)
             st.caption(
                 "How: for each child, what the site used against what the stated ratios predict from its parents' use; "
@@ -223,7 +230,7 @@ def _monday(ds: Dataset, rows: pd.DataFrame, takeover: int, weeks: float, boq_ca
         "on its first Monday, from the records as they stood then."
     )
     month = (
-        st.select_slider("As of", options=months, value=default, format_func=month_label, key="home_asof")
+        st.select_slider("As of", options=months, value=default, format_func=month_label, key=k("home_asof"))
         if len(months) > 1
         else months[0]
     )
@@ -233,7 +240,8 @@ def _monday(ds: Dataset, rows: pd.DataFrame, takeover: int, weeks: float, boq_ca
         return
     n = week["kind"].value_counts()
     st.markdown(
-        f"**{n.get('Move', 0)} transfers, {n.get('Order', 0)} orders, {n.get('Hold issues', 0)} issue holds.** "
+        f"**{plural(n.get('Move', 0), 'transfer')}, {plural(n.get('Order', 0), 'order')}, "
+        f"{plural(n.get('Hold issues', 0), 'issue hold')}.** "
         "Transfers come first: stock already bought moves before anything new is ordered."
     )
     decimals = dict(zip(ledger.items["item_code"], ledger.items["decimals"]))
