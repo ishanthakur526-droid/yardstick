@@ -11,7 +11,7 @@ import sys
 from playwright.sync_api import sync_playwright
 
 SECTIONS = {
-    "See it": ["Arrived from vendors", "Where it piled up", "All 16 items at a glance"],
+    "See it": ["Arrived from vendors", "Where it piled up", "items at a glance"],
     "Plan it": [
         "Average idle stock",
         "What the planner says, one month at a time",

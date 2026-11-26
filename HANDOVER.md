@@ -1,51 +1,108 @@
-# HANDOVER (updated hourly)
+# HANDOVER
 
-Last update: 15:36 IST, Sat 21 Nov 2026 (second fresh Sonnet 5.5 session took over at 15:14).
+Last update: Thu 26 Nov 2026, ~19:45 IST. Phase 1 of the v2 rebuild is done and released as **v1.1** (on `main`).
+
+The day-one hackathon build is preserved at tag `vch3-submission` (commit e1da49c) and in the frozen repo
+`ishanthakur526-droid/vch3-yardstick`. **Never push to that repo.** This repo (`ishanthakur526-droid/yardstick`)
+carries its history and is where all work continues.
 
 ## Where things stand
-- **Pick:** Lumino Industries, "1,700 Poles" (picked at 11:00). Product name: **Yardstick**.
-- **Repo:** https://github.com/ishanthakur526-droid/vch3-yardstick (public, created 11:02 IST).
-- **Live app:** https://vch3-yardstick-mvluj7jtvsgdnkqbw8kuqh.streamlit.app/ (Ishan deployed it at about 12:05; repo `vch3-yardstick`, branch `main`, file `app.py`, Python 3.12, secret `LUMINO_BUNDLE`). Every push to `main` redeploys it. Check it with `python tests/smoke_live.py <url>`; on Streamlit Cloud the app sits in an iframe, so the script opens the `/~/+/` route. Run it after every push: at 13:26 and again at 14:44 the host kept an old `core/` module in memory and the app showed a TypeError. **Routine: any push that changes `core/` must also change the comment line in `requirements.txt`**, which forces a clean rebuild (Manage app, Reboot app does the same). Confirm with the smoke test; it takes about a minute.
-- **15:23 display fixes (`app.py` only, commit 94ddff7):** the first two **See it** tiles no longer cut off `1,17,050 PCS` at laptop width (tile values scale with the window; checked at 1920, 1536, 1366, 1280 and 1100 px); the Requisition "Cannot arrive in time" warning names the connector in full; the all-clear at 180 days says by when the first buy list must reach procurement. Desktop and phone smoke tests passed on the live link after the push. Every number in the video script, the line and the pitch cards was re-checked against the live app's own text at 15:20 and matches.
-- **Built and tested (47 tests, all green):**
-  - `core/ledger.py` monthly ledger; `app.py` **See it** screen.
-  - `core/planner.py` replay with no look-ahead, order/hold/move, purchase cap, shortage check; **Plan it** screen with reasons per godown and Excel export.
-  - `core/sets.py` ratio check against real use and a per-godown running account; **Match the sets** screen.
-  - `core/requisition.py` BOQ to buy list (BOQ line wins; set ratio from the file or the site; per-pole estimate; stock in hand at the last month; order-by from lead time); **Requisition** screen with Excel buy list and a BOQ upload (CSV or Excel). Added at 12:30 after the desk visit.
-  - **Plan it** also shows what no spare stock would cost on a continuous plan: safety margin 0 keeps 5 of 16 items supplied, 1.0 keeps 9, the default 2.33 keeps 13.
-  - **Plan it** has a **forecast check for all 16 items** (pushed 14:19): at the start of each scored month the forecast is compared with the use over the months an order covers (lead time plus one). Median error 51% of real use; it leans high by a median 35% on purpose (the higher of the last 3 and last 6 months' average); the site was fully supplied in 506 of 512 scored item-months. Measured on 14:15: a plain 6-month average would be off by about 47% and "same as last month" by 55%, so **never claim the forecast beats a plain average**; say it is cautious on purpose and judged by the supply outcome.
-  - **Plan it → "What the saving depends on"** (14:44, after the Opus review): the headline is shown with each of its two assumptions taken away. `Settings(capped=..., basis=...)` in `core/planner.py` drives it; the real-data tests pin the poles numbers.
-- **Headline (default settings):** 13 of 16 items keep shortage under 1% and cut average idle stock by a median 54%. Poles: 29,572 → 15,347 average idle, peak 48,991 → 32,490, no shortage. **Always say it with its two assumptions** (the banner and README do): (1) the planner knows the project's total requirement (a BOQ would tell it; the data has none, so what the project really bought, 1,17,050 poles, stands in as the cap); (2) stock reaches contractors only as it is used. Measured at 14:38: without the cap still 13 of 16 and a median 54%, but poles −37% and the plan buys 1,33,442 poles; with contractors drawing ahead as they really did (contractors held about 11,182 poles on average) and only godown stock compared: 7 of 16 items, median 26%, poles −33%; both taken away: poles +4% idle (no saving). So the claim is a saving if material is issued as used and the BOQ total is known, not from ordering alone.
-- **Opus review (14:26 to 14:37, one of the day's two helper runs):** the ledger matches the raw CSVs exactly for all 16 items; all headline numbers, the 1,700-pole Requisition example and the planner's bookkeeping reproduce. Findings, all handled: the cap uses the project's total (made visible and tested); contractor stock assumption (now stated and measured); a shared child (G.I. bolts) was judged against one parent when loosely paired items were ticked (now never judged set by set); "too late" wording (now says lead time or procurement days); a stale docstring.
+- **Branches:** work on `dev`, push often (CI runs ruff + pytest on Python 3.12 on every push). Fast-forward `main`
+  only at the end of a green phase and tag it (`v1.1`, `v1.2`, ...). The Streamlit app deploys from `main`.
+- **Live app:** not yet deployed from this repo (the owner deploys it; see "Deploy" below).
+- **Tests:** 93, all green locally (real-project tests included); the real-project tests skip in CI.
+- **What v1.1 is:** the day-one features (See it, Plan it, Requisition, Match the sets, About), now working on any
+  project's data:
+  - `core/config.py`: the anchor item (what a BOQ counts in), closing stores, set thresholds, labels, read from an
+    optional `meta` table or worked out from the records (each guess shown as an assumption).
+  - `core/ingest.py`: raw stores extract (5 CSVs; sets and transfers optional) to monthly tables, shared by the CLI
+    and the app.
+  - `core/dataset.py`: one project's data plus a fingerprint; every cached result is keyed by it.
+  - `core/synth.py`: a made-up sample project (seed 7). It is the public demo when no real data is loaded and the
+    CI dataset.
+  - `ui/`: one module per screen; `app.py` is a thin router; the sidebar picks the project.
+- **Results unchanged on the real project** (pinned by tests): 13 of 16 items, median 54% less idle stock; poles
+  29,572 → 15,347 average idle (−48%) with both assumptions; the "What the saving depends on" table reproduces.
+- **Sample project:** 9 of 9 items, median 44% less idle stock under the same two assumptions. Its dynamics were
+  calibrated to the real project's measured profile before the planner was run on it (see the docstring); do not
+  retune it to change the planner's score.
 
-## The data (never commit it)
-- Raw files stay outside the repo: `F:\ClacuttaAIClub_Hackathon\data-lumino\pack\lumino-vch3-data\csv\`. The pack's `README.md` sits one level up.
-- `python tools/make_bundle.py <csv folder>` writes `data_local/bundle.txt` (git-ignored). The same text goes into the host secret `LUMINO_BUNDLE`; `data_local/streamlit_secrets.toml` holds the ready-to-paste secrets block.
-- Rules from the pack: do not dedupe rows; ignore zero rows; clip small negative stock to 0; no order dates; usage has no godown.
-- Set ratios in `sets.csv` disagree with real use for 7 of 8 pairs. Asked at Lumino's desk (11:47): no direct answer. Their rule: a line on the BOQ is the requirement, and the file's ratios come from the tendering engineers' experience. Still open: ring lugs 0.25 vs 5.7 per three-phase box, single-phase lugs 0.25 vs 0.65, whether the three bolt types are alternatives or all needed, tonnes vs kg. So Requisition shows the file's ratio and the site's side by side and never overwrites either.
-- Other desk answers (11:47): the user is head-office procurement, who work per project from a BOQ (sites and poles); they keep no spare stock and cannot miss the deadline; the data lives in their ERP, updated daily and checked weekly. Real numbers on the public link: OK given verbally at the desk (about 13:20, reported by Ishan), so no masking is needed.
-- Second visit (13:12): on the bolts they said "I cannot go by three" (all three types per clamp would leave one spare and unused), so stock first; whether the types are alternatives is still not confirmed. They expect the list to be on time (procurement needs 7 to 10 days to place an order), no overbuying, and vendor price comparison (the data has no prices). Requisition now takes the days procurement needs (default 7) and shows what is left in stock after the buy.
+## Run, test, build the bundle
+```
+uv venv --python 3.12 .venv && uv pip install --python .venv/Scripts/python.exe -r requirements-dev.txt
+.venv/Scripts/python.exe -m pytest              # all tests
+.venv/Scripts/ruff.exe check . && .venv/Scripts/ruff.exe format --check .
+.venv/Scripts/python.exe -m streamlit run app.py
+python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --secrets data_local/streamlit_secrets.toml
+```
+- The raw data is never in the repo. `data_local/` (git-ignored) holds `bundle.txt` (read locally) and
+  `streamlit_secrets.toml` (one line, `YARDSTICK_BUNDLE = "..."`, for the host's Secrets box).
+- Without any bundle the app runs on the sample project; deleting the host secret switches the public app to it.
 
-## Decisions worth knowing
-- Replay is whole-site for scoring (idle and shortage), with orders and moves decided per godown. Use per godown is an estimate (usage has no godown).
-- The first 9 months run on the original plan (what really arrived); scoring starts when the planner's own first order could land.
-- A plan counts only if under 1% of use is left unsupplied. The planner never buys more in total than the project really bought: that cap is the one place the future enters (a stand-in for the BOQ total); a test pins that future receipts reach the planner only through their total.
-- In the plan, contractors draw only what the site uses (so none is held back); the real idle figure includes stock with contractors. That is an assumption, shown next to the headline.
-- Only children that follow their parent closely (monthly correlation 0.8+) are judged for set balance.
+## Rules that hold every phase
+- **No look-ahead.** The planner at month t reads only months before t (the cap on total buying is the one stated
+  exception). Tests scramble the future and check earlier decisions do not move; every new planning feature gets the
+  same test.
+- **A saving that starves the site does not count** (under 1% of use short). Defaults (takeover 9, window 6, safety
+  2.33) were fixed before looking at results; change one only with a walk-forward check and a note on screen.
+- **Every number on screen comes from code** and the screen says how it is computed. No AI model in the numbers.
+- **Data from a file is untrusted:** names shown in markdown go through `core.safe.md`; CSV downloads through
+  `core.safe.csv_bytes`; Excel writers use `export.XLSX_OPTIONS` (no formulas or links from text). Never put data
+  into `unsafe_allow_html`.
+- **Caches:** `st.cache_data` functions take the dataset fingerprint as a hashed argument and the dataset as `_ds`.
+  Never put an uploaded dataset in `st.cache_resource`.
+- **Small, clear commits**; no secrets, keys, `.env`, raw CSV/XLSX or bundles in git. After a push that changes
+  `core/`, bump the comment line in `requirements.txt` (a hot reload on the host once kept a stale module).
 
-## Plan (times IST)
-- Done: Requisition (12:30), procurement days (13:26), forecast check (14:19). The live link passed `tests/smoke_live.py` at desktop and phone width after the 14:19 push. Cut: the mask switch (Lumino said real numbers are fine) and the Hindi store-keeper note (the store-keeper is not the user).
-- Prompter drafts filled 14:21 to 14:53 and revised for the two assumptions: `submit-post1` (neutral, no company name), `pitch-company`, `video-plan`, `video-narration`, `submit-line`, `qa-build`, `pitch-usp`, `me-data`, `me-howbuilt`. **`video-plan`, `video-narration` and `submit-line` were marked FINAL at 15:27** after the numbers were re-checked on the live link, and Ishan was told to record. Still to do: `submit-post2` and `pitch-hedge` at 16:40; finals cards at 17:50; re-check the numbers again only if the app changes.
-- **Video status (16:27):** Ishan's first Loom take (https://www.loom.com/share/ff1f3ef019094d8c9f928c11963d6f00) opens without sign-in but runs **3:54, over the 2:00 limit**: the narration was fine, the time went on scrolling and clicking through the long Plan it page. Fix chosen at 16:27: a voice-over version, `F:\ClacuttaAIClub_Hackathon\backup-video\yardstick_dub.webm` (about 1:40, every caption is the sentence to read aloud) played by `dub_player.html` in the same folder while Ishan records Loom (made by `tools\make_dub_video.py`, outside the repo). The first link stays as the safety-net submission; the latest submission counts.
-- **Silent backup video** (burned-in captions, recorded from the live link, about 1:35): `F:\ClacuttaAIClub_Hackathon\backup-video\yardstick_backup.webm`, made by `F:\ClacuttaAIClub_Hackathon\tools\make_backup_video.py <live url> <folder>` (outside the repo). Use it only if Loom fails or the link fails on stage; re-record it after any visible change.
-- Allowance: the 5-hour window reset at **15:10 IST** (3% used at 15:14; the next reset is about 20:09, after the event); weekly 33%. One Opus helper run used (14:26). A second only for a bug that blocks the main flow.
-- Next, in order: wait for Ishan's VIDEO message with the Loom link (**no pushes while he records**: a redeploy restarts the app); open the link in a private window to check it plays without sign-in and is under 2:00; 16:10 Ishan approves the line (266 characters, on the prompter's Submit tab); 16:20 the organisers' six-question check (questions 3 and 4 were already checked at 15:27: repo public, history free of keys and data, local HEAD equals origin/main; run them again); 16:30 Ishan submits; 16:40 pitch final, post 2 caption and QR card; 17:50 finals cards and the follow-up note to Lumino (06-first-90-days.md is written for the old TenderLens plan: rewrite it for Yardstick).
-- Prompter conventions (15:10): text in [square brackets] inside a card's `read` shows as a yellow chip in the teleprompter. Use it for clicks and cues, never for words to speak. `video-narration` (217 spoken words, click chips every few lines, finish by 1:50) and `pitch-company` (322 spoken words) are written that way. The company pitch is LIVE in Lumino's room: Ishan talks and drives the app, asks for their own pole count, and does not play the video (the video is only a fallback if the link fails, and the QR card leaves the link and video behind). The finals script (17:50) has the same shape.
-- After any push run `python tests/smoke_live.py <url>`; if `core/` changed, bump the comment in `requirements.txt` in the same commit.
-- **15:45 feature stop. 16:44 last push. Nothing after 16:45.**
+## Next: the v2 phases
+- **Phase 2: the lever waterfall (the new Home screen).**
+  - Lever 1, the BOQ cap: `simulate`'s `requirement` comes from a BOQ table when the data has one (the sample
+    does). Otherwise the project's real total stands in (Kanpur), labelled as a stand-in. It can be switched off.
+  - Lever 2, contractor cover of N weeks: a project-wide contractor pool `P` in `simulate`.
+    - Godown demand = `use[t] + max(0, cover·f − (P − use[t]))`, then `P = max(P − use[t], cover·f)`, where
+      `f` is the existing leak-free forecast and cover = weeks / 4.345 months.
+    - Before takeover, demand is the real net issue and `P` the real contractor stock.
+    - Score idle as godown stock + `P` in every mode.
+    - `cover_weeks=None` keeps the real issues (today's `basis="issues"`). Prove `cover_weeks=0` equals today's
+      `basis="use"` before removing the old switch, then migrate `test_godown_basis_compares_like_with_like` and
+      `test_real_poles_saving_under_each_assumption`.
+  - New `core/levers.py`: rows Actual → order by use → + BOQ cap → + contractor cover, each with average and peak
+    idle (godowns + contractors), shortage %, and whether it counts.
+  - Home also shows "what the stock report misses": contractor-held stock, set ratios that disagree with the site,
+    and stock sent to the closing store. Plus a preview of this week's actions.
+  - Fix: the five See it tiles cut off numbers at ~800 px width.
+- **Phase 3: actions.**
+  - Weekly action pack (xlsx): orders with order-by dates, transfer vouchers before new orders, contractor issue
+    holds, set alerts, BOM fixes, assumptions. Use an as-of month selector, because a finished project is replayed.
+  - BOM fix sheet; contractor holdings alerts; money layer (rates typed by the visitor plus cost of capital; nothing
+    in rupees without rates).
+  - Set-driven child demand with a leak-free bake-off: adopt per child only if it is no worse. Use expanding ratios
+    `cumsum(child[:t]) / cumsum(parent[:t])`, never the full-period calibration.
+  - Then an independent review of the lever maths.
+- **Phase 4: data screen.** Upload the 5-CSV pack or one xlsx; a downloadable blank template; a Pass/Warn/Fail
+  validator; a fuzzy column mapper (difflib plus synonyms). The uploaded dataset goes in
+  `st.session_state["custom_ds"]`, which `ui/state.choose()` already offers in the sidebar.
+- **Phase 5: hardening.**
+  - Upload size and row caps, an xlsx zip-size check, read-only openpyxl, defusedxml (already pinned).
+  - The BOQ upload in `ui/buylist.py` goes through the same safe reader.
+  - Profile and keep each screen under 2 s warm; a security review.
+
+## Known quirks
+- Streamlit `AppTest` cannot drive file uploads. Inject a dataset with `at.session_state["custom_ds"] = ds`, then
+  pick it with `at.radio(key="dataset").set_value("custom").run()`. Setting the radio's value directly fails when its
+  options change between runs.
+- On this Windows machine, a bash heredoc whose text contains `'''` breaks the shell. Write such scripts to a file
+  first.
+- The pytest config adds `-q`, so `pytest -q` prints no summary line; count the dots or use `-rA`.
+
+## Deploy (owner's clicks, Streamlit Community Cloud, free)
+1. share.streamlit.io → Create app → Deploy a public app from GitHub.
+2. Repository `ishanthakur526-droid/yardstick`, branch `main`, main file `app.py`. App URL: pick a short subdomain.
+3. Advanced settings: Python 3.12; Secrets: paste the one line from `data_local/streamlit_secrets.toml`.
+4. Deploy. Then `python tests/smoke_live.py <url>` (needs Playwright, dev only).
 
 ## If Claude is unavailable
-1. Open Antigravity (`%LOCALAPPDATA%\Programs\antigravity`), then File > Open Folder > `F:\ClacuttaAIClub_Hackathon\everything build day`.
+1. Open Antigravity (`%LOCALAPPDATA%\Programs\antigravity`), then File > Open Folder > `F:\ClacuttaAIClub_Hackathon\yardstick`.
 2. Paste this prompt into its agent:
 
-> You are continuing a hackathon build in this folder (public repo vch3-yardstick). Read HANDOVER.md and README.md first. Hard rules: never commit keys, `.env`, `secrets.toml` or any raw Lumino data (CSV, XLSX, ZIP); commit small and often with clear messages; no commits or pushes after 16:45 IST; feature stop at 15:45 IST, fixes only after that; the live link must keep working without sign-in. Continue from "Where things stand", test locally with `streamlit run app.py` and `pytest`, and tell me exactly what to click for any deploy step.
+> You are continuing the Yardstick v2 rebuild in this folder (public repo `yardstick`). Read HANDOVER.md and README.md first. Hard rules: never commit keys, `.env`, `secrets.toml`, `data_local/` or any raw company data (CSV, XLSX, ZIP); never push to the old `vch3-yardstick` repo; work on `dev`, commit small and often with clear messages, and only fast-forward `main` when the tests pass; keep the planner free of look-ahead (add a scramble-the-future test for any new planning logic); a saving that causes over 1% shortage does not count; no paid services. Continue from "Next: the v2 phases", test with `pytest` and `streamlit run app.py`, and tell me exactly what to click for any deploy step.

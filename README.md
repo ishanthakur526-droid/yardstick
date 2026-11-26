@@ -31,23 +31,25 @@ Example on the real data: a BOQ of 1,700 poles needs 16 lines. 13 are already in
 - Only 1 of 8 stated set ratios agrees with real use (the eye hook). Ring lugs were used at 22 times the stated rate.
 
 ## How it is built
-- `core/ledger.py`: the monthly ledger from the data pack's own two sums (godown stock, stock with contractors).
-- `core/planner.py`: the replay. At month *t* it reads only months before *t* (tests change the future and check nothing earlier moves), with one stated exception: the cap on total buying is what the project really bought in all, standing in for the BOQ total (a test pins that this is the only way future receipts reach it). Orders cover lead time plus a month of forecast use plus a safety margin, never more in total than the project really bought; stock above one godown's need moves to a godown about to run short.
+- `core/ingest.py`, `core/config.py`, `core/dataset.py`: any project's stores extract (items, receipts, contractor moves; sets and transfers optional) becomes monthly tables, with the project's own settings (the item a BOQ counts in, closing stores, set thresholds) read from the data or worked out and shown as assumptions.
+- `core/ledger.py`: the monthly ledger from two sums (godown stock, stock with contractors).
+- `core/planner.py`: the replay. At month *t* it reads only months before *t* (tests change the future and check nothing earlier moves), with one stated exception: the cap on total buying is what the project really bought in all, standing in for the BOQ total (a test pins that this is the only way future receipts reach it). Orders cover lead time plus a month of forecast use plus a safety margin; stock above one godown's need moves to a godown about to run short.
 - `core/sets.py`: ratio calibration against real use, pairing strength, running account per godown.
 - `core/explain.py`, `core/export.py`: the reasons per godown and the Excel exports (the plan, and the buy list).
-- `core/requisition.py`: BOQ to buy list. Set ratios (file and site), per-pole estimates, stock in hand, lead times and order-by dates; every line says where its number came from.
-- `app.py`: the Streamlit screens. No logic in it.
-- `tests/`: 47 tests on made-up scenarios with known answers and, when the data is present, on Lumino's real numbers.
+- `core/requisition.py`: BOQ to buy list. Set ratios (file and site), per-unit estimates, stock in hand, lead times and order-by dates; every line says where its number came from.
+- `core/synth.py`: a made-up sample project with the shape and traps of a real one, calibrated to a real project's measured dynamics. It is the demo when no real data is loaded, and what the automatic tests run on.
+- `app.py` and `ui/`: the Streamlit screens. No logic in them.
+- `tests/`: 90+ tests on made-up scenarios with known answers, on the sample project, on a small project shaped nothing like the original, every screen headless, and, when the data is present, on the real numbers.
 
 No AI model sits in the numbers: every figure is computed by code and can be traced to the records.
 
 ## Data
-The project data belongs to Lumino Industries Limited and is **not in this repository**. `tools/make_bundle.py` sums the raw files to month × item × godown and packs them into one text blob. The app reads that blob from a host secret (`LUMINO_BUNDLE`), the environment, or a git-ignored local file. Without it the app says so instead of crashing.
+Real project data is **never in this repository**. `tools/make_bundle.py` sums the raw files to month × item × godown and packs them into one text blob, which the app reads from a host secret (`YARDSTICK_BUNDLE`), the environment, or a git-ignored local file. Without one, the app runs on its built-in sample project. The Kanpur data belongs to Lumino Industries Limited.
 
 ## Run it
 ```
-pip install -r requirements.txt
-python tools/make_bundle.py <folder with the Lumino csv files>   # writes data_local/bundle.txt (git-ignored)
+pip install -r requirements-dev.txt
+python tools/make_bundle.py <folder with the csv files> --meta <meta.json>   # writes data_local/bundle.txt (git-ignored)
 streamlit run app.py
 pytest
 ```
