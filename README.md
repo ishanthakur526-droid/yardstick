@@ -51,3 +51,6 @@ python tools/make_bundle.py <folder with the Lumino csv files>   # writes data_l
 streamlit run app.py
 pytest
 ```
+
+## Licence
+Copyright © 2026 Ishan Thakur. All rights reserved. The code is public to read; using, copying or deploying it needs written permission.

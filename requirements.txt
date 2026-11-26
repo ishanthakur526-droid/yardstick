@@ -1,6 +1,8 @@
 streamlit==1.67.0
 pandas==3.1.1
+numpy==2.5.5
 plotly==7.1.0
 xlsxwriter==3.3.1
 openpyxl==3.1.5
-# Changing this file makes the host rebuild from scratch (a hot reload left an old module in memory after the 13:26 and 14:44 pushes).
+defusedxml==0.7.1
+# Changing this file makes the host rebuild from scratch (a hot reload once kept an old module in memory).
