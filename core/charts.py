@@ -212,3 +212,39 @@ def godown_heatmap(grid_item: pd.DataFrame, unit: str, labels: dict[str, str] | 
     fig.update_yaxes(autorange="reversed")
     fig.update_layout(hovermode="closest")
     return _base(fig, 300).update_layout(margin=dict(l=8, r=8, t=8, b=8))
+
+
+def lever_waterfall(rows: pd.DataFrame, unit: str, decimals: int = 0) -> go.Figure:
+    """Average idle stock: what really happened, then what each lever adds or takes away."""
+    from .fmt import indian
+
+    labels = [str(lab).replace(" (", "<br>(") for lab in rows["label"]]
+    first = float(rows["avg_idle"].iloc[0])
+    y = [first] + [float(v) for v in rows["change"].iloc[1:]]
+    text = [indian(first, decimals)]
+    for change, level, ok, short in zip(
+        rows["change"].iloc[1:], rows["avg_idle"].iloc[1:], rows["counts"].iloc[1:], rows["shortage_pct"].iloc[1:]
+    ):
+        sign = "+" if change > 0 else "−"
+        note = "" if ok else f"<br>{short:.1%} short:<br>does not count"
+        text.append(f"{sign}{indian(abs(change), decimals)}<br>= {indian(level, decimals)}{note}")
+    fig = go.Figure(
+        go.Waterfall(
+            x=labels,
+            y=y,
+            measure=["absolute"] + ["relative"] * (len(rows) - 1),
+            text=text,
+            textposition="outside",
+            cliponaxis=False,
+            connector=dict(line=dict(color=_GRID, width=1)),
+            increasing=dict(marker=dict(color=COLOR["short"])),
+            decreasing=dict(marker=dict(color=COLOR["used"])),
+            totals=dict(marker=dict(color=COLOR["real"])),
+            hoverinfo="skip",
+        )
+    )
+    top = float(max(rows["avg_idle"].max(), first)) * 1.28
+    fig.update_yaxes(range=[0, top], title=f"average idle stock ({unit})")
+    fig = _base(fig, 420)
+    fig.update_layout(margin=dict(l=8, r=8, t=16, b=8), showlegend=False, hovermode=False)
+    return fig

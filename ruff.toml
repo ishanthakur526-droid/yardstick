@@ -7,3 +7,6 @@ ignore = ["E501", "E731", "B905"]
 
 [lint.isort]
 known-first-party = ["core", "ui", "conftest"]
+
+[lint.flake8-bugbear]
+extend-immutable-calls = ["core.planner.Settings"]  # a frozen dataclass

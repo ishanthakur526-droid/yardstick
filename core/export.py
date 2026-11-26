@@ -21,7 +21,16 @@ def assumptions(r: Replay, name: str, source: str = "") -> list[str]:
         f"The first {s.takeover} months run on what really arrived (a forecast needs history). Scored from {month_label(r.summary['eval_from'])}.",
         f"Forecast: the higher of the last 3 and last {s.window} months' average use. Safety margin: {s.safety:.2f} standard deviations of the last {s.sd_window} months.",
         "Orders cover the lead time plus this month of forecast use plus the safety margin, after counting stock and orders already on the way.",
-        "The plan never buys more in total than the project really bought (the data has no bill of quantities).",
+        {
+            "boq": "The plan never buys more in total than the bill of quantities.",
+            "stand-in": "The plan never buys more in total than the project really bought (the data has no bill of "
+            "quantities, so that stands in for it).",
+            "none": "No cap on total buying.",
+        }[r.summary.get("cap_source", "stand-in")],
+        "Contractors draw what they really drew and hold what they really held."
+        if s.cover_weeks is None
+        else f"Contractors are issued only enough to end each month holding {s.cover_weeks:g} weeks of forecast use. "
+        "Idle stock counts the godowns and the contractors.",
         "Use is recorded for the whole project only; it is split across godowns by what each godown handed out that month (an estimate).",
         "Stock may move between godowns the same day (the records show same-day transfer vouchers).",
         f"A saving counts only if the plan left under {MAX_SHORTAGE_SHARE:.0%} of use unsupplied.",
@@ -44,6 +53,8 @@ def workbook(r: Replay, month: str, name: str, everything: pd.DataFrame, source:
             "Really idle": r.monthly["real_idle"],
             "Planner ordered": r.monthly["plan_order"],
             "Plan: arrived": r.monthly["plan_arrived"],
+            "Plan: in godowns": r.monthly["plan_godown"],
+            "Plan: with contractors": r.monthly["plan_pool"],
             "Plan: idle": r.monthly["plan_idle"],
             "Plan: could not supply": r.monthly["plan_shortage"],
         }

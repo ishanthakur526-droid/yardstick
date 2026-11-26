@@ -1,4 +1,4 @@
-"""Yardstick: a stock and ordering planner that runs on what the site actually uses.
+"""Yardstick: what each stock decision on a project is worth, and Monday's list that follows from it.
 
 UI only: this file picks the project and the section. The numbers come from `core/`, the screens from `ui/`.
 """
@@ -10,9 +10,8 @@ import logging
 import streamlit as st
 
 from core.fmt import month_label
-from core.planner import MAX_SHORTAGE_SHARE, Settings
 from core.safe import md
-from ui import about, buylist, plan, see, state
+from ui import about, buylist, home, plan, see, state
 from ui import sets as sets_ui
 
 st.set_page_config(page_title="Yardstick · stock and ordering planner", page_icon="📏", layout="wide")
@@ -24,7 +23,7 @@ ledger, cfg = ds.ledger, ds.cfg
 st.markdown(
     "<h1 style='margin-bottom:0'>Yardstick</h1>"
     "<p style='font-size:1.15rem;opacity:.85;margin:.1rem 0 .2rem'>"
-    "A stock and ordering planner that runs on what the site actually uses.</p>",
+    "What each stock decision is worth, replayed on the project's own records.</p>",
     unsafe_allow_html=True,
 )
 st.caption(
@@ -32,17 +31,8 @@ st.caption(
     f"{len(ledger.items)} items · {len(ledger.working)} godowns" + (" · made-up sample data" if cfg.is_sample else "")
 )
 
-_head = state.run_all(ds.fingerprint, ds, Settings().takeover, Settings().window, Settings().safety)
-_ok = _head[_head["counts"]]
-if len(_ok):
-    st.success(
-        f"**{len(_ok)} of {len(_head)} items** could have run on a median **{_ok['cut'].median():.0%} less idle stock**, "
-        f"with under {MAX_SHORTAGE_SHARE:.0%} of use left unsupplied, if the planner knew the project's total requirement "
-        "and stock reached contractors as it was used. **Plan it** replays any item month by month and shows what the "
-        "saving depends on; **Requisition** turns a new tender's BOQ into a buy list."
-    )
-
 SECTIONS = {
+    "Home": home.render,
     "See it": see.render,
     "Plan it": plan.render,
     "Requisition": buylist.render,
@@ -52,7 +42,7 @@ SECTIONS = {
 if ds.sets.empty:
     SECTIONS.pop("Match the sets")
 if st.session_state.get("section") not in SECTIONS:
-    st.session_state["section"] = "See it"
+    st.session_state["section"] = "Home"
 section = st.segmented_control("Section", list(SECTIONS), required=True, key="section", label_visibility="collapsed")
 
 try:

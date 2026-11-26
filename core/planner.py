@@ -57,8 +57,9 @@ class Settings:
     sd_window: int = 12  # months of recent demand the safety margin is measured on
     safety: float = 2.33  # safety margin in standard deviations (about a 99% service level on a normal curve)
     capped: bool = True  # lever 1: never order more in total than the BOQ (or the stand-in for it)
-    basis: str = "use"  # legacy switch, replaced by cover_weeks: "use" plans on site use, "issues" on real issues
-    cover_weeks: float | None = None  # lever 2: weeks of forecast use contractors may hold (overrides `basis` if set)
+    # lever 2: weeks of forecast use contractors may hold at month end. 0: they get exactly what the site uses.
+    # None: they draw what they really drew (and hold what they really held).
+    cover_weeks: float | None = DEFAULT_COVER_WEEKS
 
 
 @dataclass
@@ -204,12 +205,15 @@ def simulate(
     step: float,
     settings: Settings,
     cover: float | None = None,
+    returned: np.ndarray | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[dict]]:
     """The core loop. At month t it only reads `demand[:t]`; tests prove changing later months changes nothing before.
 
     `cover=None`: `demand` is what each godown hands out each month, as given.
     `cover=c` (months): `demand` is the site's use by godown. Contractors are one pool that ends each month holding
-    `c` months of forecast use (the rule runs from the first month; the pool starts empty, as a project does)."""
+    `c` months of forecast use (the rule runs from the first month; the pool starts empty, as a project does).
+    `returned`: stock contractors hand back to each godown, booked at month end (only with `cover=None`, where they
+    draw what they really drew and so return what they really returned)."""
     t_len, g_len = demand.shape
     pooled = cover is not None
     site_use = demand.sum(axis=1)
@@ -298,6 +302,8 @@ def simulate(
                 if unmet[j] <= 1e-9:
                     break
         stock = left
+        back = returned[t] if returned is not None else np.zeros(g_len)
+        stock = stock + back
         short = np.maximum(unmet, 0.0)
         handed = float(need.sum() - short.sum())
 
@@ -347,6 +353,7 @@ def simulate(
                 "plan_order": order.sum(),
                 "plan_asked": need.sum(),  # what the godowns were asked to hand out
                 "plan_issued": handed,  # what they did hand out
+                "plan_returned": float(back.sum()),  # handed back by contractors (as drawn only)
                 "plan_used": used_t,
                 "plan_shortage": site_short,
                 "plan_godown": stock.sum(),
@@ -386,16 +393,16 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings(), boq: floa
     site = item_site(ledger, code).set_index("month").reindex(months)
     used = site["used"].to_numpy()
     received = matrix("received")
-    cover = None
-    like_for_like = settings.cover_weeks is None and settings.basis == "issues"
-    if settings.cover_weeks is not None:
-        demand = used[:, None] * allocation_shares(matrix("net_issue"))
-        cover = max(0.0, float(settings.cover_weeks)) / WEEKS_PER_MONTH
-    elif like_for_like:
-        # What the godowns really handed out, so contractors keep holding what they really held: compare godown stock with godown stock.
-        demand = np.clip(matrix("net_issue"), 0.0, None)
+    as_drawn = settings.cover_weeks is None
+    if as_drawn:
+        # Contractors draw what they really drew: the godowns are asked for the real issues, and contractors hold what
+        # they really held.
+        net = matrix("net_issue")
+        demand, cover, back = np.clip(net, 0.0, None), None, np.clip(-net, 0.0, None)
     else:
         demand = used[:, None] * allocation_shares(matrix("net_issue"))
+        cover = max(0.0, float(settings.cover_weeks)) / WEEKS_PER_MONTH
+        back = None
 
     cap, cap_source = cap_for(settings, float(received.sum()), boq)
     monthly, by_godown, moves = simulate(
@@ -408,11 +415,18 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings(), boq: floa
         step=step,
         settings=settings,
         cover=cover,
+        returned=back,
     )
-    monthly["used"] = demand.sum(axis=1) if like_for_like else used
+    held = site["with_contractors"].to_numpy()
+    if as_drawn:
+        monthly["plan_pool"] = held
+        monthly["plan_idle"] = monthly["plan_godown"] + held
+        monthly["used"] = demand.sum(axis=1)  # what contractors drew: a shortage is what the godowns could not hand out
+    else:
+        monthly["used"] = used
     monthly["forecast"] = by_godown.groupby("month", sort=True)["forecast_use"].sum().reindex(months).to_numpy()
     monthly["real_arrived"] = site["received"].to_numpy()
-    monthly["real_idle"] = (site["godown_stock"] if like_for_like else site["idle_total"]).to_numpy()
+    monthly["real_idle"] = site["idle_total"].to_numpy()  # godowns plus contractors, in every mode
     monthly["real_in_godowns"] = site["godown_stock"].to_numpy()
     monthly["real_with_contractors"] = site["with_contractors"].to_numpy()
 

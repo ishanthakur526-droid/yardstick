@@ -8,7 +8,7 @@ from streamlit.testing.v1 import AppTest
 from conftest import real
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
-SECTIONS = ["See it", "Plan it", "Requisition", "Match the sets", "About the data"]
+SECTIONS = ["Home", "See it", "Plan it", "Requisition", "Match the sets", "About the data"]
 
 
 def run(section: str, dataset: str, custom=None) -> AppTest:
@@ -38,7 +38,7 @@ def test_a_small_project_with_no_sets_or_transfers(section, minimal_ds):
     at = run(section, "custom", custom=minimal_ds)
     assert_clean(at)
     shown = at.session_state["section"]
-    assert shown == ("See it" if section == "Match the sets" else section)  # no sets: that screen is not offered
+    assert shown == ("Home" if section == "Match the sets" else section)  # no sets: that screen is not offered
 
 
 @real

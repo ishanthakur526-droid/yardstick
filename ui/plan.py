@@ -5,13 +5,13 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core import charts, explain, export
+from core import charts, explain, export, levers
 from core.dataset import Dataset
 from core.fmt import indian, month_label, short_item
-from core.planner import MAX_SHORTAGE_SHARE, Settings, counts
+from core.planner import DEFAULT_COVER_WEEKS, MAX_SHORTAGE_SHARE, Settings, counts
 from core.safe import csv_bytes, file_part, md
-from ui.common import XLSX, number_columns
-from ui.state import planner_limits, run_all, run_replay
+from ui.common import XLSX, lever_rows_table, number_columns
+from ui.state import planner_limits, run_all, run_levers, run_replay
 
 
 def render(ds: Dataset) -> None:
@@ -34,6 +34,24 @@ def render(ds: Dataset) -> None:
     low, high, start = planner_limits(ds)
     with st.expander("Planner settings"):
         s1, s2, s3 = st.columns(3)
+        s4, s5, _ = st.columns(3)
+        cover = float(
+            s4.slider(
+                "Contractor cover (weeks)",
+                0,
+                8,
+                int(DEFAULT_COVER_WEEKS),
+                help="How much forecast use contractors may hold at month end. 0: they get exactly what the site uses.",
+                key="plan_cover",
+            )
+        )
+        capped = s5.toggle(
+            "Cap buying at the BOQ",
+            value=True,
+            help="Never order more in total than the bill of quantities (or what was really bought, when the data has "
+            "no BOQ).",
+            key="plan_boq",
+        )
         if high > low:
             takeover = s1.slider(
                 "Months on the original plan first",
@@ -64,7 +82,7 @@ def render(ds: Dataset) -> None:
             ("Light cushion (1.0)", 1.0),
             (f"This screen's setting ({safety:.2f})", safety),
         ):
-            d = run_all(fp, ds, takeover, window, k)
+            d = run_all(fp, ds, takeover, window, k, capped, cover)
             ok_ = d[d["counts"]]
             trade.append(
                 {
@@ -81,7 +99,7 @@ def render(ds: Dataset) -> None:
             "there is nothing to forecast, so no spare stock is the right rule: see **Requisition**."
         )
 
-    r = run_replay(fp, ds, code, takeover, window, safety)
+    r = run_replay(fp, ds, code, takeover, window, safety, capped, cover)
     s = r.summary
     unit, dec = r.unit, ledger.decimals(code)
     ok = counts(s)
@@ -175,7 +193,11 @@ def render(ds: Dataset) -> None:
     d2.download_button(
         "Download the plan (Excel)",
         export.workbook(
-            r, month, short_item(names[code], 80), run_all(fp, ds, takeover, window, safety), source=cfg.source
+            r,
+            month,
+            short_item(names[code], 80),
+            run_all(fp, ds, takeover, window, safety, capped, cover),
+            source=cfg.source,
         ),
         file_name=f"yardstick_{file_part(code)}_{month}.xlsx",
         mime=XLSX,
@@ -203,7 +225,7 @@ def render(ds: Dataset) -> None:
     )
 
     st.subheader(f"All {n_items} items, same settings")
-    everything = run_all(fp, ds, takeover, window, safety)
+    everything = run_all(fp, ds, takeover, window, safety, capped, cover)
     n_ok = int(everything["counts"].sum())
     median_cut = float(everything.loc[everything["counts"], "cut"].median()) if n_ok else 0.0
     st.markdown(
@@ -229,7 +251,7 @@ def render(ds: Dataset) -> None:
         hide_index=True,
     )
 
-    _depends(ds, takeover, window, safety)
+    _levers(ds, code, takeover, window, safety, cover, capped)
     _forecast_check(everything, window)
 
     with st.expander("How this plan works, and what it assumes"):
@@ -237,65 +259,39 @@ def render(ds: Dataset) -> None:
             f"- **Orders.** Each month: forecast = the higher of the last 3 and last {window} months' average use. "
             f"Cover = that forecast for the lead time plus this month, plus {safety:.2f} standard deviations of recent use "
             "as a safety margin. The order is whatever is missing after counting stock and orders already on the way. "
-            "It never buys more in total than the project really bought (the data has no bill of quantities).\n"
+            "It never buys more in total than the cap: the BOQ when the data has one, else what the project really "
+            "bought (switch the cap off in the settings).\n"
             "- **Moves.** Stock above one godown's own need goes to a godown that would run short this month, before "
             "anything new is ordered. Transfers are same-day in the records, so a move during the month is allowed too "
             "and is counted.\n"
             "- **No peeking, with one stated exception.** The planner reads only months before the one it is deciding; "
-            "the tests change the future and check nothing earlier moves. The exception is the cap on total buying: it is "
-            "what the project really bought in all, standing in for the bill of quantities a project knows at the start. "
-            "**What the saving depends on** shows the result without it.\n"
+            "the tests change the future and check nothing earlier moves. The exception is the stand-in cap: when the data "
+            "has no bill of quantities, what the project really bought in all stands in for the one a project knows at "
+            "the start. **What each lever is worth** shows the result without it.\n"
             f"- **First {takeover} months** run on what really arrived, because a forecast needs history. Orders landing "
             "within the first lead time after that are inherited too. Scoring starts after that.\n"
             "- **Use by godown is an estimate.** Use is recorded for the whole project only, so each month's use is split "
             "by what each godown handed out.\n"
-            "- **Contractor-held stock** is part of the real idle figure. In the plan, contractors draw what the site "
-            "uses, so none is held back."
+            f"- **Contractors** are issued only enough to end each month holding {cover:g} weeks of forecast use "
+            "(one pool for the whole project: the records do not say which contractor holds what). Idle stock counts "
+            "the godowns and the contractors, in the plan and in what really happened."
         )
 
 
-def _depends(ds: Dataset, takeover: int, window: int, safety: float) -> None:
-    """The headline rests on two assumptions: take each away and show what is left."""
-    ledger, cfg, fp = ds.ledger, ds.cfg, ds.fingerprint
-    anchor = cfg.anchor_code if cfg.anchor_code in set(ledger.items["item_code"]) else None
-    noun = cfg.anchor_plural.capitalize()
-    st.subheader("What the saving depends on")
-    st.markdown(
-        f"The headline rests on two assumptions. Here is each one taken away, on all {len(ledger.items)} items."
-    )
-    scenarios = (
-        ("As above", True, "use"),
-        ("The planner does not know the project's total requirement", False, "use"),
-        ("Contractors keep drawing ahead of use, as they really did", True, "issues"),
-        ("Both taken away", False, "issues"),
-    )
-    anchor_rows, sens = {}, []
-    for label, capped_, basis_ in scenarios:
-        d_ = run_all(fp, ds, takeover, window, safety, capped_, basis_)
-        ok_ = d_[d_["counts"]]
-        row = {
-            "Scenario": label,
-            "Items that kept the site supplied": f"{len(ok_)} of {len(d_)}",
-            "Median cut in idle stock": f"{ok_['cut'].median():.0%}" if len(ok_) else "–",
-        }
-        if anchor:
-            p_ = d_[d_["code"] == anchor].iloc[0]
-            anchor_rows[(capped_, basis_)] = p_
-            row[f"{noun}: average idle stock, really → with the plan"] = (
-                f"{indian(p_['avg_real'])} → {indian(p_['avg_plan'])} ({-p_['cut']:+.0%})"
-            )
-            row[f"{noun} the plan buys (really bought)"] = f"{indian(p_['plan_recv'])} ({indian(p_['real_recv'])})"
-        sens.append(row)
-    st.dataframe(pd.DataFrame(sens), hide_index=True)
-    held_text = ""
-    if anchor:
-        held = anchor_rows[(True, "use")]["avg_real"] - anchor_rows[(True, "issues")]["avg_real"]
-        held_text = f"On {md(cfg.anchor_plural)} they held about {indian(held)} on average. "
+def _levers(ds: Dataset, code: str, takeover: int, window: int, safety: float, cover: float, capped: bool) -> None:
+    """What the saving rests on: each lever switched on in turn, for this item and for all items."""
+    ledger, fp = ds.ledger, ds.fingerprint
+    st.subheader("What each lever is worth")
+    tables = run_levers(fp, ds, takeover, window, safety, cover, capped)
+    st.dataframe(lever_rows_table(tables[code], ledger.decimals(code)), hide_index=True)
+    p = levers.portfolio(tables)
+    parts = []
+    for i, (lab, a, b, m) in enumerate(zip(p["label"], p["items_counting"], p["items"], p["median_cut"])):
+        parts.append(f"{lab}: {a} of {b} count" + (f", median cut {m:.0%}" if i > 0 and a and not pd.isna(m) else ""))
     st.caption(
-        "The first row is the headline. It assumes (1) the planner knows the project's total requirement, as a bill of "
-        "quantities would tell it (the data has none, so what the project really bought stands in), and (2) stock "
-        "reaches contractors only as it is used. In reality contractors drew ahead of use. "
-        f"{held_text}In the last two rows they keep doing that, so only godown stock is compared."
+        "Each row switches one more lever on, with this screen's settings. All items: "
+        + "; ".join(parts)
+        + ". **Home** shows the same as a chart."
     )
 
 

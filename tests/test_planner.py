@@ -13,7 +13,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from conftest import real  # noqa: E402
-from core.planner import MAX_SHORTAGE_SHARE, Settings, counts, replay, simulate, summarise  # noqa: E402
+from core.planner import (  # noqa: E402
+    DEFAULT_COVER_WEEKS,
+    MAX_SHORTAGE_SHARE,
+    WEEKS_PER_MONTH,
+    Settings,
+    counts,
+    replay,
+    simulate,
+    summarise,
+)
 
 MONTHS = [str(p) for p in pd.period_range("2024-01", periods=24, freq="M")]
 GODOWNS = ["A", "B", "C"]
@@ -175,14 +184,15 @@ def test_real_replay_does_not_use_the_future(ledger):
         step=unit_step("PCS"),
         settings=Settings(),
     )
-    a, _ = decisions(simulate(demand=demand, **kw))
     shaken = demand.copy()
     shaken[t0:] = shaken[t0:][::-1] * 3
-    b, _ = decisions(simulate(demand=shaken, **kw))
     upto = ledger.months[: t0 + 1]
-    pd.testing.assert_frame_equal(
-        a[a.month.isin(upto)].reset_index(drop=True), b[b.month.isin(upto)].reset_index(drop=True)
-    )
+    for cover in (None, 0.0, DEFAULT_COVER_WEEKS / WEEKS_PER_MONTH):  # as given, and with the contractor pool
+        a, _ = decisions(simulate(demand=demand, cover=cover, **kw))
+        b, _ = decisions(simulate(demand=shaken, cover=cover, **kw))
+        pd.testing.assert_frame_equal(
+            a[a.month.isin(upto)].reset_index(drop=True), b[b.month.isin(upto)].reset_index(drop=True)
+        )
 
 
 def forecast_check(demand, lead=2):
@@ -248,26 +258,33 @@ def test_the_cap_binds_when_it_is_low_and_vanishes_when_removed():
 
 
 @real
-def test_real_poles_saving_under_each_assumption(ledger):
-    """The numbers the Plan it screen shows under 'What the saving depends on' for poles, so they cannot drift unnoticed."""
+def test_real_poles_saving_under_each_lever(ledger):
+    """The poles numbers behind the lever waterfall, so they cannot drift unnoticed. Cover 0 is the old headline
+    (basis "use"); as drawn replaced the old basis "issues"."""
     code = "MPO010014"
-    base = replay(ledger, code).summary
-    nocap = replay(ledger, code, Settings(capped=False)).summary
-    godown = replay(ledger, code, Settings(basis="issues")).summary
-    assert base["avg_real"] == pytest.approx(29572, abs=1) and base["reduction"] == pytest.approx(0.48, abs=0.01)
-    assert nocap["reduction"] == pytest.approx(0.37, abs=0.01) and nocap["plan_received"] > base["plan_received"]
-    assert godown["avg_real"] == pytest.approx(18390, abs=1) and godown["reduction"] == pytest.approx(0.33, abs=0.01)
+    zero = replay(ledger, code, Settings(cover_weeks=0)).summary
+    nocap = replay(ledger, code, Settings(capped=False, cover_weeks=0)).summary
+    drawn = replay(ledger, code, Settings(cover_weeks=None)).summary
+    drawn_free = replay(ledger, code, Settings(cover_weeks=None, capped=False)).summary
+    assert zero["avg_real"] == pytest.approx(29572, abs=1) and zero["avg_plan"] == pytest.approx(15347, abs=1)
+    assert zero["reduction"] == pytest.approx(0.48, abs=0.01)
+    assert nocap["reduction"] == pytest.approx(0.37, abs=0.01) and nocap["plan_received"] > zero["plan_received"]
+    # as drawn is scored on all idle stock, and contractors' returns go back into the godowns (the old basis dropped them)
+    assert drawn["avg_plan"] == pytest.approx(23688, abs=1) and drawn["reduction"] == pytest.approx(0.20, abs=0.01)
+    assert drawn_free["reduction"] < 0.0  # ordering on a forecast alone, with no cap and no issue rule, saves nothing
+    assert drawn["cap_source"] == "stand-in" and drawn_free["cap_source"] == "none"
 
 
 @real
-def test_godown_basis_compares_like_with_like(ledger):
+def test_as_drawn_keeps_what_contractors_really_held(ledger):
     code = "MPO010014"
-    all_idle, godown = replay(ledger, code), replay(ledger, code, Settings(basis="issues"))
-    assert (godown.monthly["real_idle"] == godown.monthly["real_in_godowns"]).all()
-    assert (
-        all_idle.monthly["real_idle"] >= godown.monthly["real_idle"] - 1e-9
-    ).all()  # contractors hold the difference
-    assert godown.monthly["used"].sum() >= all_idle.monthly["used"].sum() - 1e-6  # issues run ahead of use
+    drawn, zero = replay(ledger, code, Settings(cover_weeks=None)), replay(ledger, code, Settings(cover_weeks=0))
+    m = drawn.monthly
+    assert (m["plan_pool"] == m["real_with_contractors"]).all()
+    assert (m["plan_idle"] == m["plan_godown"] + m["plan_pool"]).all()
+    assert (m["real_idle"] == m["real_in_godowns"] + m["real_with_contractors"]).all()
+    assert (zero.monthly["real_idle"] == m["real_idle"]).all()  # every mode is scored against the same actual
+    assert m["used"].sum() >= zero.monthly["used"].sum() - 1e-6  # issues run ahead of use
 
 
 # ---- lever 2: contractor cover ---------------------------------------------------------------
@@ -356,23 +373,32 @@ def test_a_shortfall_eats_the_contractors_cover_before_it_stops_the_site():
     assert monthly["plan_used"].sum() + monthly["plan_shortage"].sum() == pytest.approx(sc["demand"].sum())
 
 
-def test_replay_with_zero_cover_reproduces_the_use_basis(sample_ds):
-    """The proof the old switch can go: on every item of the sample project, cover 0 gives the same plan and the same
-    score as basis "use"."""
+def test_the_boq_caps_buying_when_the_data_has_one(sample_ds):
+    """Lever 1 on the sample project, which carries a BOQ: the planner never buys past it, and says where its cap came
+    from. Without a BOQ, what was really bought stands in, and it is labelled as a stand-in."""
     ledger = sample_ds.ledger
     for code in ledger.items["item_code"]:
-        old = replay(ledger, code, Settings(basis="use"))
-        new = replay(ledger, code, Settings(cover_weeks=0))
-        pd.testing.assert_frame_equal(old.by_godown, new.by_godown)
-        pd.testing.assert_frame_equal(old.moves, new.moves)
-        for k, v in old.summary.items():
-            assert new.summary[k] == (pytest.approx(v, rel=1e-12, nan_ok=True) if isinstance(v, float) else v), k
+        boq = sample_ds.boq_qty(code)
+        assert boq is not None and boq > 0
+        r = replay(ledger, code, Settings(), boq=boq)
+        assert r.summary["cap_source"] == "boq"
+        assert r.summary["requirement"] == boq
+        planned = r.monthly["plan_arrived"].iloc[r.settings.takeover + r.lead_months :].sum()
+        inherited = r.monthly["plan_arrived"].iloc[: r.settings.takeover + r.lead_months].sum()
+        assert planned + inherited <= max(boq, inherited) + 1e-6
+    assert replay(ledger, "SPO001").summary["cap_source"] == "stand-in"
+    assert replay(ledger, "SPO001", Settings(capped=False), boq=1.0).summary["cap_source"] == "none"
 
 
-@real
-def test_real_zero_cover_reproduces_the_use_basis(ledger):
-    for code in ledger.items["item_code"]:
-        old, new = replay(ledger, code, Settings(basis="use")), replay(ledger, code, Settings(cover_weeks=0))
-        pd.testing.assert_frame_equal(old.by_godown, new.by_godown)
-        for k, v in old.summary.items():
-            assert new.summary[k] == (pytest.approx(v, rel=1e-12, nan_ok=True) if isinstance(v, float) else v), k
+def test_as_drawn_books_contractors_returns_back_into_the_godowns():
+    """Contractors who really drew stock also really returned some. Those returns refill the godown they went to."""
+    sc = scenario(seed=2)
+    back = np.zeros((24, 3))
+    back[5, 1] = 70.0
+    with_back = simulate(**sc, returned=back)[0]
+    without = simulate(**sc)[0]
+    assert with_back["plan_returned"].sum() == pytest.approx(70.0)
+    assert with_back["plan_godown"].iloc[5] == pytest.approx(without["plan_godown"].iloc[5] + 70.0)
+    assert with_back["plan_arrived"].sum() + 70.0 - with_back["plan_issued"].sum() == pytest.approx(
+        with_back["plan_godown"].iloc[-1], abs=1e-6
+    )

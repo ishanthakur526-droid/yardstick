@@ -26,6 +26,11 @@ class Dataset:
     fingerprint: str
     tables: dict[str, pd.DataFrame] = field(default_factory=dict, repr=False)
 
+    def boq_qty(self, code: str) -> float | None:
+        """The bill of quantities for one item, when the data has one (several lines for an item are added up)."""
+        rows = self.boq[self.boq["item_code"] == code]
+        return float(rows["qty"].sum()) if len(rows) else None
+
 
 def fingerprint(tables: dict[str, pd.DataFrame]) -> str:
     h = hashlib.sha256()

@@ -9,15 +9,16 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core import ingest, synth
+from core import actions as monday_list
+from core import ingest, levers, synth
 from core import sets as setcheck
 from core.bundle import BundleError, load_tables
 from core.dataset import Dataset, from_tables
 from core.fmt import short_item
-from core.planner import Settings, counts, replay
+from core.planner import DEFAULT_COVER_WEEKS, Settings, counts, replay
 
 BUNDLE, SAMPLE, CUSTOM = "bundle", "sample", "custom"
-WIDGET_PREFIXES = ("see_", "plan_", "boq_", "set_")  # per-project choices, cleared when the project changes
+WIDGET_PREFIXES = ("home_", "see_", "plan_", "boq_", "set_")  # per-project choices, cleared when the project changes
 TTL = 6 * 3600
 
 
@@ -76,21 +77,26 @@ def run_replay(
     window: int,
     safety: float,
     capped: bool = True,
-    basis: str = "use",
+    cover_weeks: float | None = DEFAULT_COVER_WEEKS,
 ):
-    return replay(
-        _ds.ledger, code, Settings(takeover=takeover, window=window, safety=safety, capped=capped, basis=basis)
-    )
+    settings = Settings(takeover=takeover, window=window, safety=safety, capped=capped, cover_weeks=cover_weeks)
+    return replay(_ds.ledger, code, settings, boq=_ds.boq_qty(code))
 
 
 @st.cache_data(show_spinner="Replaying every item month by month…", max_entries=64, ttl=TTL)
 def run_all(
-    fp: str, _ds: Dataset, takeover: int, window: int, safety: float, capped: bool = True, basis: str = "use"
+    fp: str,
+    _ds: Dataset,
+    takeover: int,
+    window: int,
+    safety: float,
+    capped: bool = True,
+    cover_weeks: float | None = DEFAULT_COVER_WEEKS,
 ) -> pd.DataFrame:
     ledger = _ds.ledger
     rows = []
     for code in ledger.items["item_code"]:
-        r = run_replay(fp, _ds, code, takeover, window, safety, capped, basis)
+        r = run_replay(fp, _ds, code, takeover, window, safety, capped, cover_weeks)
         s = r.summary
         rows.append(
             {
@@ -113,9 +119,33 @@ def run_all(
                 "eval_months": s["eval_months"],
                 "plan_recv": s["plan_received"],
                 "real_recv": s["real_received"],
+                "cap_source": s["cap_source"],
             }
         )
     return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner="Replaying each lever on every item…", max_entries=64, ttl=TTL)
+def run_levers(
+    fp: str, _ds: Dataset, takeover: int, window: int, safety: float, cover_weeks: float, boq_cap: bool
+) -> dict[str, pd.DataFrame]:
+    """The lever waterfall for every item, built from the cached replays."""
+    plan = levers.steps(Settings(takeover=takeover, window=window, safety=safety), cover_weeks, boq_cap)
+    out = {}
+    for code in _ds.ledger.items["item_code"]:
+        out[code] = levers.rows(
+            lambda s, c=code: run_replay(fp, _ds, c, s.takeover, s.window, s.safety, s.capped, s.cover_weeks), plan
+        )
+    return out
+
+
+@st.cache_data(show_spinner="Building Monday's list…", max_entries=64, ttl=TTL)
+def run_week(
+    fp: str, _ds: Dataset, month: str, takeover: int, cover_weeks: float | None, boq_cap: bool
+) -> pd.DataFrame:
+    settings = Settings(takeover=takeover, cover_weeks=cover_weeks, capped=boq_cap)
+    boq = {c: _ds.boq_qty(c) for c in _ds.ledger.items["item_code"]}
+    return monday_list.week(_ds.ledger, month, settings, boq)
 
 
 @st.cache_data(show_spinner=False, max_entries=32, ttl=TTL)
