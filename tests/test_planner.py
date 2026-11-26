@@ -25,8 +25,14 @@ def scenario(seed=1, lead=2, takeover=4):
     demand = np.round(rng.uniform(20, 120, size=(24, 3)) * np.array([1.0, 0.6, 0.2]))
     inherited = np.round(rng.uniform(100, 400, size=(24, 3)))
     return dict(
-        months=MONTHS, godowns=GODOWNS, demand=demand, inherited=inherited, requirement=float(inherited.sum()),
-        lead=lead, step=1.0, settings=Settings(takeover=takeover, window=3, sd_window=6, safety=2.0),
+        months=MONTHS,
+        godowns=GODOWNS,
+        demand=demand,
+        inherited=inherited,
+        requirement=float(inherited.sum()),
+        lead=lead,
+        step=1.0,
+        settings=Settings(takeover=takeover, window=3, sd_window=6, safety=2.0),
     )
 
 
@@ -47,7 +53,9 @@ def test_no_look_ahead():
     changed["demand"] = demand
     b_g, b_m = decisions(simulate(**changed))
     upto = [m for m in MONTHS[: t0 + 1]]
-    pd.testing.assert_frame_equal(a_g[a_g.month.isin(upto)].reset_index(drop=True), b_g[b_g.month.isin(upto)].reset_index(drop=True))
+    pd.testing.assert_frame_equal(
+        a_g[a_g.month.isin(upto)].reset_index(drop=True), b_g[b_g.month.isin(upto)].reset_index(drop=True)
+    )
     assert [m for m in a_m if m["month"] in upto] == [m for m in b_m if m["month"] in upto]
 
 
@@ -61,18 +69,20 @@ def test_stock_before_the_change_is_untouched_too():
     changed["demand"] = demand
     b = simulate(**changed)[1]
     early = MONTHS[:t0]
-    pd.testing.assert_frame_equal(a[a.month.isin(early)].reset_index(drop=True), b[b.month.isin(early)].reset_index(drop=True))
+    pd.testing.assert_frame_equal(
+        a[a.month.isin(early)].reset_index(drop=True), b[b.month.isin(early)].reset_index(drop=True)
+    )
 
 
 def test_never_buys_more_than_the_requirement():
     sc = scenario()
     window = sc["settings"].takeover + sc["lead"]
-    already = float(sc["inherited"][:window].sum())          # arrives on the original plan, before the planner acts
+    already = float(sc["inherited"][:window].sum())  # arrives on the original plan, before the planner acts
     sc["requirement"] = already + 500.0
-    sc["demand"] = sc["demand"] * 3                           # heavy use: the planner would love to buy far more
+    sc["demand"] = sc["demand"] * 3  # heavy use: the planner would love to buy far more
     monthly, _, _ = simulate(**sc)
     assert monthly["plan_arrived"].sum() <= sc["requirement"] + 1e-6
-    assert monthly["plan_arrived"].sum() > already            # it did use the room it had
+    assert monthly["plan_arrived"].sum() > already  # it did use the room it had
 
 
 def test_no_orders_when_the_requirement_is_already_met():
@@ -96,7 +106,9 @@ def test_orders_land_one_lead_time_later():
 def test_stock_is_conserved():
     sc = scenario(seed=5)
     monthly, by_godown, moves = simulate(**sc)
-    assert monthly["plan_arrived"].sum() - monthly["plan_used"].sum() == pytest.approx(monthly["plan_idle"].iloc[-1], abs=1e-6)
+    assert monthly["plan_arrived"].sum() - monthly["plan_used"].sum() == pytest.approx(
+        monthly["plan_idle"].iloc[-1], abs=1e-6
+    )
     assert by_godown["move_in"].sum() == pytest.approx(by_godown["move_out"].sum())
     assert (by_godown["stock_end"] >= -1e-9).all()
 
@@ -105,7 +117,7 @@ def test_idle_stock_is_moved_instead_of_reordered():
     """Godown C holds a pile it never uses; B keeps running short. The planner should move C's stock to B."""
     sc = scenario(lead=2, takeover=3)
     demand = np.zeros((24, 3))
-    demand[:, 1] = 80.0   # only B has use
+    demand[:, 1] = 80.0  # only B has use
     inherited = np.zeros((24, 3))
     inherited[0, 2] = 5000.0  # a big pile arrives at C and nobody there uses it
     inherited[:6, 1] = 30.0
@@ -145,23 +157,37 @@ def test_real_poles_cut_idle_without_starving(ledger):
 @real
 def test_real_replay_does_not_use_the_future(ledger):
     """Same check as above, on Lumino's own poles: scramble use from month 24 on; decisions up to month 24 hold."""
-    from core.planner import allocation_shares, lead_months, unit_step
     from core.ledger import item_site
+    from core.planner import allocation_shares, lead_months, unit_step
 
     code, t0 = "MPO010014", 24
     grid = ledger.grid[ledger.grid.item_code == code]
     working = [g for g in ledger.godowns if g != "KANPUR CLOSER"]
-    mat = lambda col: grid.pivot(index="month", columns="godown", values=col).reindex(index=ledger.months, columns=working).fillna(0.0).to_numpy()
+    mat = lambda col: (
+        grid.pivot(index="month", columns="godown", values=col)
+        .reindex(index=ledger.months, columns=working)
+        .fillna(0.0)
+        .to_numpy()
+    )
     used = item_site(ledger, code)["used"].to_numpy()
     demand = used[:, None] * allocation_shares(mat("net_issue"))
-    kw = dict(months=ledger.months, godowns=working, inherited=mat("received"), requirement=float(mat("received").sum()),
-              lead=lead_months(150), step=unit_step("PCS"), settings=Settings())
+    kw = dict(
+        months=ledger.months,
+        godowns=working,
+        inherited=mat("received"),
+        requirement=float(mat("received").sum()),
+        lead=lead_months(150),
+        step=unit_step("PCS"),
+        settings=Settings(),
+    )
     a, _ = decisions(simulate(demand=demand, **kw))
     shaken = demand.copy()
     shaken[t0:] = shaken[t0:][::-1] * 3
     b, _ = decisions(simulate(demand=shaken, **kw))
     upto = ledger.months[: t0 + 1]
-    pd.testing.assert_frame_equal(a[a.month.isin(upto)].reset_index(drop=True), b[b.month.isin(upto)].reset_index(drop=True))
+    pd.testing.assert_frame_equal(
+        a[a.month.isin(upto)].reset_index(drop=True), b[b.month.isin(upto)].reset_index(drop=True)
+    )
 
 
 def forecast_check(demand, lead=2):
@@ -174,7 +200,9 @@ def forecast_check(demand, lead=2):
     monthly["real_arrived"] = sc["inherited"].sum(axis=1)
     monthly["real_idle"] = monthly["plan_idle"]
     move_df = pd.DataFrame(moves, columns=["month", "when", "from", "to", "qty"])
-    return summarise(monthly, by_godown, move_df, eval_start=4 + lead, requirement=float(sc["inherited"].sum()), step=1.0, lead=lead)
+    return summarise(
+        monthly, by_godown, move_df, eval_start=4 + lead, requirement=float(sc["inherited"].sum()), step=1.0, lead=lead
+    )
 
 
 def test_forecast_check_is_exact_when_use_is_flat():
@@ -204,18 +232,20 @@ def test_future_receipts_reach_the_planner_only_through_their_total():
     sc = scenario()
     moved = sc["inherited"].copy()
     moved[22] += moved[20]
-    moved[20] = 0.0                                   # same total, later month, well after the inherited months
+    moved[20] = 0.0  # same total, later month, well after the inherited months
     pd.testing.assert_frame_equal(decisions(simulate(**sc))[0], decisions(simulate(**{**sc, "inherited": moved}))[0])
 
     free = dict(sc, requirement=float("inf"))
     bigger = sc["inherited"].copy()
     bigger[22] += 5000.0
-    pd.testing.assert_frame_equal(decisions(simulate(**free))[0], decisions(simulate(**{**free, "inherited": bigger}))[0])
+    pd.testing.assert_frame_equal(
+        decisions(simulate(**free))[0], decisions(simulate(**{**free, "inherited": bigger}))[0]
+    )
 
 
 def test_the_cap_binds_when_it_is_low_and_vanishes_when_removed():
     sc = scenario()
-    sc["demand"] = sc["demand"] * 3                           # heavy use, so the planner has reason to order
+    sc["demand"] = sc["demand"] * 3  # heavy use, so the planner has reason to order
     already = float(sc["inherited"][: sc["settings"].takeover + sc["lead"]].sum())
     capped = simulate(**dict(sc, requirement=already + 500.0))[0]
     free = simulate(**dict(sc, requirement=float("inf")))[0]
@@ -239,6 +269,7 @@ def test_godown_basis_compares_like_with_like(ledger):
     code = "MPO010014"
     all_idle, godown = replay(ledger, code), replay(ledger, code, Settings(basis="issues"))
     assert (godown.monthly["real_idle"] == godown.monthly["real_in_godowns"]).all()
-    assert (all_idle.monthly["real_idle"] >= godown.monthly["real_idle"] - 1e-9).all()      # contractors hold the difference
-    assert godown.monthly["used"].sum() >= all_idle.monthly["used"].sum() - 1e-6            # issues run ahead of use
-
+    assert (
+        all_idle.monthly["real_idle"] >= godown.monthly["real_idle"] - 1e-9
+    ).all()  # contractors hold the difference
+    assert godown.monthly["used"].sum() >= all_idle.monthly["used"].sum() - 1e-6  # issues run ahead of use

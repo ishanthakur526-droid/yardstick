@@ -51,16 +51,36 @@ def stock_story(site: pd.DataFrame, unit: str) -> go.Figure:
         subplot_titles=(f"Stock on hand at month end ({unit})", f"What moved each month ({unit})"),
     )
     fig.add_trace(
-        go.Scatter(x=x, y=site["godown_stock"], name="Idle in godowns", mode="lines", stackgroup="stock",
-                   line=dict(width=0.8, color=COLOR["godown"]), fillcolor="rgba(124,58,237,0.55)"),
-        row=1, col=1,
+        go.Scatter(
+            x=x,
+            y=site["godown_stock"],
+            name="Idle in godowns",
+            mode="lines",
+            stackgroup="stock",
+            line=dict(width=0.8, color=COLOR["godown"]),
+            fillcolor="rgba(124,58,237,0.55)",
+        ),
+        row=1,
+        col=1,
     )
     fig.add_trace(
-        go.Scatter(x=x, y=site["with_contractors"], name="Held by contractors", mode="lines", stackgroup="stock",
-                   line=dict(width=0.8, color=COLOR["contractor"]), fillcolor="rgba(251,146,60,0.55)"),
-        row=1, col=1,
+        go.Scatter(
+            x=x,
+            y=site["with_contractors"],
+            name="Held by contractors",
+            mode="lines",
+            stackgroup="stock",
+            line=dict(width=0.8, color=COLOR["contractor"]),
+            fillcolor="rgba(251,146,60,0.55)",
+        ),
+        row=1,
+        col=1,
     )
-    for col, label, color in (("received", "Arrived from vendors", "arrived"), ("issue", "Issued to contractors", "issued"), ("used", "Actually used", "used")):
+    for col, label, color in (
+        ("received", "Arrived from vendors", "arrived"),
+        ("issue", "Issued to contractors", "issued"),
+        ("used", "Actually used", "used"),
+    ):
         fig.add_trace(go.Bar(x=x, y=site[col], name=label, marker_color=COLOR[color]), row=2, col=1)
     fig.update_layout(barmode="group", bargap=0.2)
     fig.update_annotations(font_size=13, xanchor="left", x=0)
@@ -71,26 +91,80 @@ def replay_chart(monthly: pd.DataFrame, takeover: int, eval_start: int, unit: st
     """Real idle stock against the plan's, with use underneath and shortage and orders below."""
     x = _dates(monthly["month"])
     fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.07,
-        subplot_titles=(f"Idle stock at month end ({unit})", f"Orders the planner placed, and use it could not supply ({unit})"),
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=[0.72, 0.28],
+        vertical_spacing=0.07,
+        subplot_titles=(
+            f"Idle stock at month end ({unit})",
+            f"Orders the planner placed, and use it could not supply ({unit})",
+        ),
     )
-    fig.add_trace(go.Bar(x=x, y=monthly["used"], name="Actually used", marker_color=COLOR["used"], opacity=0.5), row=1, col=1)
-    fig.add_trace(go.Scatter(x=x, y=monthly["real_idle"], name="What really happened", mode="lines",
-                             line=dict(width=3, color=COLOR["real"])), row=1, col=1)
-    fig.add_trace(go.Scatter(x=x, y=monthly["plan_idle"], name="With the planner", mode="lines",
-                             line=dict(width=3, color=COLOR["plan"])), row=1, col=1)
-    fig.add_trace(go.Bar(x=x, y=monthly["plan_order"], name="Orders placed", marker_color=COLOR["plan"], opacity=0.7), row=2, col=1)
-    fig.add_trace(go.Bar(x=x, y=monthly["plan_shortage"], name="Could not supply", marker_color=COLOR["short"]), row=2, col=1)
+    fig.add_trace(
+        go.Bar(x=x, y=monthly["used"], name="Actually used", marker_color=COLOR["used"], opacity=0.5), row=1, col=1
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=monthly["real_idle"],
+            name="What really happened",
+            mode="lines",
+            line=dict(width=3, color=COLOR["real"]),
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x, y=monthly["plan_idle"], name="With the planner", mode="lines", line=dict(width=3, color=COLOR["plan"])
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Bar(x=x, y=monthly["plan_order"], name="Orders placed", marker_color=COLOR["plan"], opacity=0.7),
+        row=2,
+        col=1,
+    )
+    fig.add_trace(
+        go.Bar(x=x, y=monthly["plan_shortage"], name="Could not supply", marker_color=COLOR["short"]), row=2, col=1
+    )
 
     first = x[0].to_pydatetime()
     take = x[min(takeover, len(x) - 1)].to_pydatetime()
     ev = x[min(eval_start, len(x) - 1)].to_pydatetime()
-    for x0, x1, label, fill in ((first, take, "Original plan", "rgba(128,128,128,0.10)"), (take, ev, "First orders on their way", "rgba(14,165,233,0.07)")):
+    for x0, x1, label, fill in (
+        (first, take, "Original plan", "rgba(128,128,128,0.10)"),
+        (take, ev, "First orders on their way", "rgba(14,165,233,0.07)"),
+    ):
         if x1 > x0:
-            fig.add_shape(type="rect", xref="x", yref="paper", x0=x0, x1=x1, y0=0, y1=1, fillcolor=fill, line_width=0, layer="below")
-            fig.add_annotation(xref="x", yref="y domain", x=x0, y=0.98, text=label, showarrow=False, xanchor="left", yanchor="top",
-                               font=dict(size=11, color="gray"))
-    fig.add_shape(type="line", xref="x", yref="paper", x0=ev, x1=ev, y0=0, y1=1, line=dict(width=1, dash="dot", color="gray"))
+            fig.add_shape(
+                type="rect",
+                xref="x",
+                yref="paper",
+                x0=x0,
+                x1=x1,
+                y0=0,
+                y1=1,
+                fillcolor=fill,
+                line_width=0,
+                layer="below",
+            )
+            fig.add_annotation(
+                xref="x",
+                yref="y domain",
+                x=x0,
+                y=0.98,
+                text=label,
+                showarrow=False,
+                xanchor="left",
+                yanchor="top",
+                font=dict(size=11, color="gray"),
+            )
+    fig.add_shape(
+        type="line", xref="x", yref="paper", x0=ev, x1=ev, y0=0, y1=1, line=dict(width=1, dash="dot", color="gray")
+    )
     fig.update_layout(barmode="overlay", bargap=0.2)
     fig.update_annotations(font_size=13, selector=dict(xref="paper"))
     return _base(fig, 620)
@@ -113,7 +187,7 @@ def set_account(view_account: pd.DataFrame, child_name: str, watch: float, serio
         if place == "All godowns":
             continue
         fig.add_trace(go.Scatter(x=_dates(sub["month"]), y=sub["off"], name=short_godown(place), mode="lines"))
-    for level, label, color in ((watch, "watch", "rgba(245,158,11,0.9)"), (serious, "serious", "rgba(239,68,68,0.9)")):
+    for level, color in ((watch, "rgba(245,158,11,0.9)"), (serious, "rgba(239,68,68,0.9)")):
         for sign in (1, -1):
             fig.add_hline(y=sign * level, line_dash="dot", line_color=color, line_width=1)
     fig.update_yaxes(tickformat=".0%", title=f"{child_name}: ahead (+) or behind (−) the parents")

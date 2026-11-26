@@ -31,12 +31,24 @@ ITEMS = pd.DataFrame(
 )
 SETS = pd.DataFrame(
     {
-        "set_no": [1.0, 1.0], "parent_code": ["P", "P2"], "parent_name": ["PARENT SET", "SECOND PARENT"], "parent_unit": ["SET", "NOS"],
-        "child_code": ["C", "C"], "child_name": ["CHILD HOOK"] * 2, "child_unit": ["NOS"] * 2, "ratio_of_parent": [2.0, 1.0],
+        "set_no": [1.0, 1.0],
+        "parent_code": ["P", "P2"],
+        "parent_name": ["PARENT SET", "SECOND PARENT"],
+        "parent_unit": ["SET", "NOS"],
+        "child_code": ["C", "C"],
+        "child_name": ["CHILD HOOK"] * 2,
+        "child_unit": ["NOS"] * 2,
+        "ratio_of_parent": [2.0, 1.0],
     }
 )
 #            received, issued, used
-TOTALS = {"POLE": (1000, 400, 400), "P": (3000, 1000, 800), "P2": (1000, 200, 200), "C": (8000, 2000, 3600), "X": (500, 100, 300)}
+TOTALS = {
+    "POLE": (1000, 400, 400),
+    "P": (3000, 1000, 800),
+    "P2": (1000, 200, 200),
+    "C": (8000, 2000, 3600),
+    "X": (500, 100, 300),
+}
 TODAY = date(2026, 11, 21)
 
 
@@ -46,7 +58,10 @@ def make():
         + [(c, "G", MONTHS[1], 0, 0, 0, i, 0) for c, (_, i, _) in TOTALS.items()],
         columns=["item_code", "godown", "month", "received", "tr_in", "tr_out", "issue", "ret"],
     )
-    used = pd.DataFrame([(c, m, u / len(MONTHS)) for c, (_, _, u) in TOTALS.items() for m in MONTHS], columns=["item_code", "month", "used"])
+    used = pd.DataFrame(
+        [(c, m, u / len(MONTHS)) for c, (_, _, u) in TOTALS.items() for m in MONTHS],
+        columns=["item_code", "month", "used"],
+    )
     return build_ledger(flows, used, ITEMS)
 
 
@@ -67,7 +82,9 @@ def line(req, code):
 def test_a_typed_boq_line_is_the_requirement_and_the_ratios_are_only_a_cross_check():
     c = line(run({"P": 50, "C": 7}), "C")
     assert c["needed"] == 7 and c["source"] == "BOQ line"
-    assert c["at_file"] == pytest.approx(100) and c["at_site"] == pytest.approx(200)   # what the set ratios would have said
+    assert c["at_file"] == pytest.approx(100) and c["at_site"] == pytest.approx(
+        200
+    )  # what the set ratios would have said
 
 
 def test_children_follow_their_parent_at_the_chosen_ratio():
@@ -75,7 +92,7 @@ def test_children_follow_their_parent_at_the_chosen_ratio():
     assert site["needed"] == 200 and site["source"] == "Set ratio (site)"
     file = line(run({"P": 50}, basis="stated"), "C")
     assert file["needed"] == 100 and file["source"] == "Set ratio (file)"
-    assert file["at_site"] == pytest.approx(200)              # both are always shown
+    assert file["at_site"] == pytest.approx(200)  # both are always shown
 
 
 def test_a_child_shared_by_two_parents_adds_up():
@@ -87,44 +104,44 @@ def test_other_items_are_estimated_from_use_per_pole():
     req = run({"POLE": 100})
     assert line(req, "X")["needed"] == 75 and line(req, "X")["source"] == "Per pole (site)"
     assert line(req, "P")["needed"] == 200 and line(req, "P2")["needed"] == 50
-    assert line(req, "C")["needed"] == 200 * 4.0 + 50 * 2.0   # through the set ratios, not a second estimate
+    assert line(req, "C")["needed"] == 200 * 4.0 + 50 * 2.0  # through the set ratios, not a second estimate
     assert list(run({"POLE": 100}, per_pole=False).lines["item_code"]) == ["POLE"]
 
 
 def test_units_bought_whole_are_rounded_up():
-    assert line(run({"POLE": 101}), "X")["needed"] == 76     # 75.75
+    assert line(run({"POLE": 101}), "X")["needed"] == 76  # 75.75
 
 
 def test_only_what_is_missing_is_bought():
-    req = run({"POLE": 700})                                  # 600 in stock
+    req = run({"POLE": 700})  # 600 in stock
     assert line(req, "POLE")["buy"] == 100
-    p = line(req, "P")                                        # needs 1,400, has 2,000
+    p = line(req, "P")  # needs 1,400, has 2,000
     assert p["buy"] == 0 and p["kind"] == "covered" and p["left_over"] == 600
 
 
 def test_contractor_stock_counts_only_when_asked():
-    assert line(run({"POLE": 1050}), "P")["buy"] == 100       # needs 2,100; 2,000 in godowns
-    assert line(run({"POLE": 1050}, with_contractors=True), "P")["buy"] == 0   # plus 200 with contractors
+    assert line(run({"POLE": 1050}), "P")["buy"] == 100  # needs 2,100; 2,000 in godowns
+    assert line(run({"POLE": 1050}, with_contractors=True), "P")["buy"] == 0  # plus 200 with contractors
 
 
 def test_the_deadline_decides_what_is_too_late():
     req = run({"POLE": 1000}, days_left=100)
-    pole = line(req, "POLE")                                  # lead time 150 days, needed in 100: the order date has passed
+    pole = line(req, "POLE")  # lead time 150 days, needed in 100: the order date has passed
     assert pole["kind"] == "late" and pole["late_days"] == 50 and pole["status"] == "Too late by 50 days"
-    x = line(req, "X")                                        # needs 750, has 400; lead time 60 <= 100
+    x = line(req, "X")  # needs 750, has 400; lead time 60 <= 100
     assert x["kind"] == "order" and x["buy"] == 350 and x["order_by"] == TODAY + timedelta(days=40)
-    assert req.lines["kind"].iloc[0] == "late"                # the urgent lines come first
+    assert req.lines["kind"].iloc[0] == "late"  # the urgent lines come first
     s = summary(req)
     assert s["lines"] == len(req.lines) and s["late"] == 1 and s["to_buy"] + s["covered"] == s["lines"]
 
 
 def test_procurement_needs_days_before_the_order_date():
     req = run({"POLE": 1000}, days_left=100, handoff_days=7)
-    x = line(req, "X")                                        # order by day 40, so the list is due on day 33
+    x = line(req, "X")  # order by day 40, so the list is due on day 33
     assert x["send_by"] == TODAY + timedelta(days=33) and x["status"] == f"Send to procurement by {x['send_by']:%d %b}"
-    assert line(req, "POLE")["late_days"] == 57               # 50 days past the order date, plus the 7 procurement days
-    assert line(run({"POLE": 1000}, days_left=66), "X")["kind"] == "order"                    # order by day 6
-    assert line(run({"POLE": 1000}, days_left=66, handoff_days=7), "X")["kind"] == "late"     # list was due yesterday
+    assert line(req, "POLE")["late_days"] == 57  # 50 days past the order date, plus the 7 procurement days
+    assert line(run({"POLE": 1000}, days_left=66), "X")["kind"] == "order"  # order by day 6
+    assert line(run({"POLE": 1000}, days_left=66, handoff_days=7), "X")["kind"] == "late"  # list was due yesterday
 
 
 def test_an_item_code_not_in_the_data_is_reported_not_guessed():
@@ -142,7 +159,7 @@ def test_the_excel_buy_list_has_its_three_sheets():
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         names = z.read("xl/workbook.xml").decode()
     assert all(n in names for n in ("Buy list", "Ratio check", "Assumptions"))
-    assert requisition_workbook(run({}))[:2] == b"PK"        # even an empty BOQ gives a valid file
+    assert requisition_workbook(run({}))[:2] == b"PK"  # even an empty BOQ gives a valid file
 
 
 def test_ratio_check_in_plain_words():

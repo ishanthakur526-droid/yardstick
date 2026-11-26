@@ -39,13 +39,13 @@ MAX_SHORTAGE_SHARE = 0.01
 
 @dataclass(frozen=True)
 class Settings:
-    takeover: int = 9      # months of the original plan before the planner starts ordering (it needs history)
-    window: int = 6        # months of recent use the forecast averages
-    sd_window: int = 12    # months of recent use the safety margin is measured on
-    safety: float = 2.33   # safety margin in standard deviations (about a 99% service level on a normal curve)
-    capped: bool = True    # never order more in total than the project really bought (the stand-in for the BOQ total)
-    basis: str = "use"     # "use": plan on what the site used, contractors draw only that, compare with ALL idle stock.
-                           # "issues": plan on what the godowns really handed out, compare with godown stock only
+    takeover: int = 9  # months of the original plan before the planner starts ordering (it needs history)
+    window: int = 6  # months of recent use the forecast averages
+    sd_window: int = 12  # months of recent use the safety margin is measured on
+    safety: float = 2.33  # safety margin in standard deviations (about a 99% service level on a normal curve)
+    capped: bool = True  # never order more in total than the project really bought (the stand-in for the BOQ total)
+    basis: str = "use"  # "use": plan on what the site used, contractors draw only that, compare with ALL idle stock.
+    # "issues": plan on what the godowns really handed out, compare with godown stock only
 
 
 @dataclass
@@ -56,10 +56,10 @@ class Replay:
     settings: Settings
     months: list[str]
     godowns: list[str]
-    eval_start: int          # first month index whose supply the planner decided
-    monthly: pd.DataFrame    # one row per month
+    eval_start: int  # first month index whose supply the planner decided
+    monthly: pd.DataFrame  # one row per month
     by_godown: pd.DataFrame  # one row per month x godown
-    moves: pd.DataFrame      # one row per move
+    moves: pd.DataFrame  # one row per move
     summary: dict
 
 
@@ -81,7 +81,7 @@ def allocation_shares(net_issue: np.ndarray) -> np.ndarray:
         if total > 0:
             w[t] = pos[t] / total
             continue
-        recent = pos[max(0, t - 6):t].sum(axis=0)
+        recent = pos[max(0, t - 6) : t].sum(axis=0)
         w[t] = recent / recent.sum() if recent.sum() > 0 else 1.0 / g_len
     return w
 
@@ -131,14 +131,14 @@ def simulate(
         move_out = np.zeros(g_len)
 
         if t >= h:
-            recent = use[max(0, t - settings.window):t]
-            quick = use[max(0, t - 3):t]                    # the last 3 months: reacts when the site speeds up
-            f, sd = float(max(recent.mean(), quick.mean())), float(use[max(0, t - settings.sd_window):t].std())
-            share = _shares(demand[max(0, t - settings.window):t].sum(axis=0))
+            recent = use[max(0, t - settings.window) : t]
+            quick = use[max(0, t - 3) : t]  # the last 3 months: reacts when the site speeds up
+            f, sd = float(max(recent.mean(), quick.mean())), float(use[max(0, t - settings.sd_window) : t].std())
+            share = _shares(demand[max(0, t - settings.window) : t].sum(axis=0))
             f_g, safe_g = f * share, k * sd * share
             need_now = f_g + safe_g
             target = f_g * (lead + 1) + safe_g * math.sqrt(lead + 1)
-            coming = pipe[t + 1:t + lead].sum(axis=0)           # lands before a new order could
+            coming = pipe[t + 1 : t + lead].sum(axis=0)  # lands before a new order could
             position = have + coming
 
             surplus = np.maximum(0.0, np.minimum(have - need_now, position - target))
@@ -158,19 +158,29 @@ def simulate(
                     deficit[j] -= q
                     move_out[i] += q
                     move_in[j] += q
-                    moves.append({"month": months[t], "when": "start of month", "from": godowns[i], "to": godowns[j], "qty": round(q, 2)})
+                    moves.append(
+                        {
+                            "month": months[t],
+                            "when": "start of month",
+                            "from": godowns[i],
+                            "to": godowns[j],
+                            "qty": round(q, 2),
+                        }
+                    )
                     if deficit[j] <= 0:
                         break
 
             position = have + coming
             wanted = max(0.0, float(target.sum() - position.sum()))
-            room = max(0.0, requirement - float(pipe.sum()))   # never buy more in total than the project really bought
+            room = max(0.0, requirement - float(pipe.sum()))  # never buy more in total than the project really bought
             wanted = min(wanted, room)
             if wanted > 0:
                 gap = np.maximum(0.0, target - position)
-                weights = gap / gap.sum() if gap.sum() > 0 else _shares(demand[max(0, t - settings.window):t].sum(axis=0))
+                weights = (
+                    gap / gap.sum() if gap.sum() > 0 else _shares(demand[max(0, t - settings.window) : t].sum(axis=0))
+                )
                 order = _up(wanted * weights, step)
-                if order.sum() > room + 1e-9:                    # rounding up must not break the cap
+                if order.sum() > room + 1e-9:  # rounding up must not break the cap
                     order = np.array([_down(x, step) for x in wanted * weights])
                 pipe[t + lead] += order
 
@@ -192,7 +202,15 @@ def simulate(
                 unmet[j] -= q
                 move_out[i] += q
                 move_in[j] += q
-                moves.append({"month": months[t], "when": "during the month", "from": godowns[i], "to": godowns[j], "qty": round(q, 2)})
+                moves.append(
+                    {
+                        "month": months[t],
+                        "when": "during the month",
+                        "from": godowns[i],
+                        "to": godowns[j],
+                        "qty": round(q, 2),
+                    }
+                )
                 if unmet[j] <= 1e-9:
                     break
         stock = left
@@ -209,15 +227,29 @@ def simulate(
                 action = "Hold"
             godown_rows.append(
                 {
-                    "month": months[t], "godown": godowns[g], "forecast_use": f_g[g], "safety": safe_g[g], "target": target[g],
-                    "arrived": arrivals[g], "move_in": move_in[g], "move_out": move_out[g], "order": order[g], "action": action,
-                    "use_est": need[g], "shortage": short[g], "stock_end": stock[g],
+                    "month": months[t],
+                    "godown": godowns[g],
+                    "forecast_use": f_g[g],
+                    "safety": safe_g[g],
+                    "target": target[g],
+                    "arrived": arrivals[g],
+                    "move_in": move_in[g],
+                    "move_out": move_out[g],
+                    "order": order[g],
+                    "action": action,
+                    "use_est": need[g],
+                    "shortage": short[g],
+                    "stock_end": stock[g],
                 }
             )
         month_rows.append(
             {
-                "month": months[t], "plan_arrived": arrivals.sum(), "plan_order": order.sum(), "plan_used": need.sum() - short.sum(),
-                "plan_shortage": short.sum(), "plan_idle": stock.sum(),
+                "month": months[t],
+                "plan_arrived": arrivals.sum(),
+                "plan_order": order.sum(),
+                "plan_used": need.sum() - short.sum(),
+                "plan_shortage": short.sum(),
+                "plan_idle": stock.sum(),
                 "planning": t >= h,
             }
         )
@@ -232,7 +264,12 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay
     grid = ledger.grid[ledger.grid["item_code"] == code]
 
     def matrix(col: str) -> np.ndarray:
-        return grid.pivot(index="month", columns="godown", values=col).reindex(index=months, columns=working).fillna(0.0).to_numpy()
+        return (
+            grid.pivot(index="month", columns="godown", values=col)
+            .reindex(index=months, columns=working)
+            .fillna(0.0)
+            .to_numpy()
+        )
 
     site = item_site(ledger, code).set_index("month").reindex(months)
     used = site["used"].to_numpy()
@@ -245,9 +282,14 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay
         demand = used[:, None] * allocation_shares(matrix("net_issue"))
 
     monthly, by_godown, moves = simulate(
-        months=months, godowns=working, demand=demand, inherited=received,
+        months=months,
+        godowns=working,
+        demand=demand,
+        inherited=received,
         requirement=float(received.sum()) if settings.capped else float("inf"),
-        lead=lead, step=unit_step(unit), settings=settings,
+        lead=lead,
+        step=unit_step(unit),
+        settings=settings,
     )
     monthly["used"] = demand.sum(axis=1) if like_for_like else used
     monthly["forecast"] = by_godown.groupby("month", sort=True)["forecast_use"].sum().reindex(months).to_numpy()
@@ -259,13 +301,29 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay
     move_df = pd.DataFrame(moves, columns=["month", "when", "from", "to", "qty"])
     eval_start = min(settings.takeover + lead, len(months) - 1)
     return Replay(
-        code=code, unit=unit, lead_months=lead, settings=settings, months=months, godowns=working, eval_start=eval_start,
-        monthly=monthly, by_godown=by_godown, moves=move_df,
+        code=code,
+        unit=unit,
+        lead_months=lead,
+        settings=settings,
+        months=months,
+        godowns=working,
+        eval_start=eval_start,
+        monthly=monthly,
+        by_godown=by_godown,
+        moves=move_df,
         summary=summarise(monthly, by_godown, move_df, eval_start, float(received.sum()), unit_step(unit), lead),
     )
 
 
-def summarise(monthly: pd.DataFrame, by_godown: pd.DataFrame, moves: pd.DataFrame, eval_start: int, requirement: float, step: float = 1.0, lead: int = 1) -> dict:
+def summarise(
+    monthly: pd.DataFrame,
+    by_godown: pd.DataFrame,
+    moves: pd.DataFrame,
+    eval_start: int,
+    requirement: float,
+    step: float = 1.0,
+    lead: int = 1,
+) -> dict:
     """Scores over the months the planner's own orders could affect (from `eval_start`)."""
     ev = monthly.iloc[eval_start:]
     used_total = float(ev["used"].sum())
@@ -278,22 +336,31 @@ def summarise(monthly: pd.DataFrame, by_godown: pd.DataFrame, moves: pd.DataFram
     span = lead + 1
     starts = range(eval_start, len(u) - lead)
     guess = np.array([f[t] * span for t in starts])
-    real_span = np.array([u[t:t + span].sum() for t in starts])
-    wape = float(np.abs(guess - real_span).sum() / real_span.sum()) if len(real_span) and real_span.sum() > 0 else float("nan")
-    bias = float((guess - real_span).sum() / real_span.sum()) if len(real_span) and real_span.sum() > 0 else float("nan")
+    real_span = np.array([u[t : t + span].sum() for t in starts])
+    wape = (
+        float(np.abs(guess - real_span).sum() / real_span.sum())
+        if len(real_span) and real_span.sum() > 0
+        else float("nan")
+    )
+    bias = (
+        float((guess - real_span).sum() / real_span.sum()) if len(real_span) and real_span.sum() > 0 else float("nan")
+    )
     return {
         "eval_from": str(ev["month"].iloc[0]),
         "eval_months": int(len(ev)),
         "span_months": span,
-        "forecast_error": wape,   # how far the forecast was from what the next lead-time-plus-one months really used
-        "forecast_bias": bias,    # positive: the forecast ran high on the whole
+        "forecast_error": wape,  # how far the forecast was from what the next lead-time-plus-one months really used
+        "forecast_bias": bias,  # positive: the forecast ran high on the whole
         "months_served": int(len(ev) - (ev["plan_shortage"] > 0.5 * step).sum()),
         "avg_real": avg_real,
         "avg_plan": avg_plan,
         "reduction": (1 - avg_plan / avg_real) if avg_real > 0 else 0.0,
-        "peak_real": float(pr.max()), "peak_real_month": str(ev.loc[pr.idxmax(), "month"]),
-        "peak_plan": float(pp.max()), "peak_plan_month": str(ev.loc[pp.idxmax(), "month"]),
-        "end_real": float(pr.iloc[-1]), "end_plan": float(pp.iloc[-1]),
+        "peak_real": float(pr.max()),
+        "peak_real_month": str(ev.loc[pr.idxmax(), "month"]),
+        "peak_plan": float(pp.max()),
+        "peak_plan_month": str(ev.loc[pp.idxmax(), "month"]),
+        "end_real": float(pr.iloc[-1]),
+        "end_plan": float(pp.iloc[-1]),
         "used_total": used_total,
         "shortage_total": short_total,
         "shortage_pct": short_total / used_total if used_total > 0 else 0.0,
@@ -302,8 +369,14 @@ def summarise(monthly: pd.DataFrame, by_godown: pd.DataFrame, moves: pd.DataFram
         "orders_qty": float(gb["order"].sum()),
         "moves_n": int(len(moves[moves["month"].isin(ev["month"])])),
         "moves_qty": float(moves.loc[moves["month"].isin(ev["month"]), "qty"].sum()) if len(moves) else 0.0,
-        "moves_planned_n": int(((moves["month"].isin(ev["month"])) & (moves["when"] == "start of month")).sum()) if len(moves) else 0,
-        "moves_planned_qty": float(moves.loc[moves["month"].isin(ev["month"]) & (moves["when"] == "start of month"), "qty"].sum()) if len(moves) else 0.0,
+        "moves_planned_n": int(((moves["month"].isin(ev["month"])) & (moves["when"] == "start of month")).sum())
+        if len(moves)
+        else 0,
+        "moves_planned_qty": float(
+            moves.loc[moves["month"].isin(ev["month"]) & (moves["when"] == "start of month"), "qty"].sum()
+        )
+        if len(moves)
+        else 0.0,
         "requirement": requirement,
         "real_received": float(monthly["real_arrived"].sum()),
         "plan_received": float(monthly["plan_arrived"].sum()),

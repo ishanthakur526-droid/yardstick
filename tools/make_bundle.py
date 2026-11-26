@@ -33,8 +33,16 @@ def monthly_tables(csv_dir: str | Path) -> dict[str, pd.DataFrame]:
     keys = ["item_code", "godown", "month"]
     parts = [
         rec.assign(month=month(rec)).groupby(keys)["qty_received"].sum().rename("received"),
-        tr[tr.direction == "IN"].assign(month=month(tr[tr.direction == "IN"])).groupby(keys)["qty"].sum().rename("tr_in"),
-        tr[tr.direction == "OUT"].assign(month=month(tr[tr.direction == "OUT"])).groupby(keys)["qty"].sum().rename("tr_out"),
+        tr[tr.direction == "IN"]
+        .assign(month=month(tr[tr.direction == "IN"]))
+        .groupby(keys)["qty"]
+        .sum()
+        .rename("tr_in"),
+        tr[tr.direction == "OUT"]
+        .assign(month=month(tr[tr.direction == "OUT"]))
+        .groupby(keys)["qty"]
+        .sum()
+        .rename("tr_out"),
     ]
     for kind, col in (("ISSUE", "issue"), ("RETURN", "ret")):
         sub = cm[cm["type"] == kind]

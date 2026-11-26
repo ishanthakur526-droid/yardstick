@@ -9,18 +9,29 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.ledger import build_ledger  # noqa: E402
-from core.sets import POOLED, balance, calibrate, calendar, flagged, pairing  # noqa: E402
+from core.sets import POOLED, balance, calendar, calibrate, flagged, pairing  # noqa: E402
 
 MONTHS = [str(p) for p in pd.period_range("2024-01", periods=20, freq="M")]
 ITEMS = pd.DataFrame(
     {
-        "item_code": ["P", "C"], "item_name": ["PARENT SET", "CHILD HOOK"], "unit": ["SET", "NOS"],
-        "lead_time_days": [60, 60], "role": ["Parent", "Child"],
+        "item_code": ["P", "C"],
+        "item_name": ["PARENT SET", "CHILD HOOK"],
+        "unit": ["SET", "NOS"],
+        "lead_time_days": [60, 60],
+        "role": ["Parent", "Child"],
     }
 )
 SETS = pd.DataFrame(
-    {"set_no": [1.0], "parent_code": ["P"], "parent_name": ["PARENT SET"], "parent_unit": ["SET"],
-     "child_code": ["C"], "child_name": ["CHILD HOOK"], "child_unit": ["NOS"], "ratio_of_parent": [2.0]}
+    {
+        "set_no": [1.0],
+        "parent_code": ["P"],
+        "parent_name": ["PARENT SET"],
+        "parent_unit": ["SET"],
+        "child_code": ["C"],
+        "child_name": ["CHILD HOOK"],
+        "child_unit": ["NOS"],
+        "ratio_of_parent": [2.0],
+    }
 )
 
 
@@ -67,7 +78,7 @@ def test_a_stated_ratio_that_disagrees_with_use_is_caught():
     wrong = SETS.assign(ratio_of_parent=0.25)  # the file says 0.25, the site really used 2 per set
     cal = calibrate(make(child_factor=2.0), wrong)
     assert not bool(cal.loc[0, "agrees"])
-    assert cal.loc[0, "factor"] == pytest.approx(8.0, rel=1e-6)   # real use is 8x the stated ratio
+    assert cal.loc[0, "factor"] == pytest.approx(8.0, rel=1e-6)  # real use is 8x the stated ratio
     assert cal.loc[0, "observed"] == pytest.approx(2.0, rel=1e-6)  # the calibrated ratio recovers it
 
 
@@ -80,14 +91,14 @@ def test_a_godown_that_stops_getting_the_child_is_flagged_behind():
     assert len(f) > 0
     assert set(f["godown"]) == {"A"}
     assert set(f["kind"]) == {"behind"}
-    assert f["month"].min() > MONTHS[8]                 # nothing is flagged before the child stopped
+    assert f["month"].min() > MONTHS[8]  # nothing is flagged before the child stopped
     assert (calendar(view)["status"] != "balanced").any()
 
 
 def test_a_child_that_does_not_follow_its_parent_is_not_judged_by_default():
     scenario = make(starve_a_from=8)
     assert calibrate(scenario, SETS).loc[0, "pairing"] != "strong"
-    assert len(flagged(balance(scenario, SETS, "P", "stated"))) == 0        # default judges strong pairings only
+    assert len(flagged(balance(scenario, SETS, "P", "stated"))) == 0  # default judges strong pairings only
     assert len(flagged(balance(scenario, SETS, "P", "stated", judge=EVERY_PAIRING))) > 0
 
 
@@ -101,12 +112,25 @@ def test_a_shared_child_is_never_judged_against_one_parent():
     """Two parents share one child that goes out exactly in ratio for both together. Setting its total against a single
     parent would show a surplus that is not there, so a shared child is left out of the set-by-set judgement."""
     items = pd.DataFrame(
-        {"item_code": ["P1", "P2", "C"], "item_name": ["PARENT ONE", "PARENT TWO", "SHARED BOLT"], "unit": ["SET", "SET", "NOS"],
-         "lead_time_days": [60, 60, 60], "role": ["Parent", "Parent", "Child"]}
+        {
+            "item_code": ["P1", "P2", "C"],
+            "item_name": ["PARENT ONE", "PARENT TWO", "SHARED BOLT"],
+            "unit": ["SET", "SET", "NOS"],
+            "lead_time_days": [60, 60, 60],
+            "role": ["Parent", "Parent", "Child"],
+        }
     )
     sets = pd.DataFrame(
-        {"set_no": [1.0, 2.0], "parent_code": ["P1", "P2"], "parent_name": ["PARENT ONE", "PARENT TWO"], "parent_unit": ["SET", "SET"],
-         "child_code": ["C", "C"], "child_name": ["SHARED BOLT", "SHARED BOLT"], "child_unit": ["NOS", "NOS"], "ratio_of_parent": [1.0, 1.0]}
+        {
+            "set_no": [1.0, 2.0],
+            "parent_code": ["P1", "P2"],
+            "parent_name": ["PARENT ONE", "PARENT TWO"],
+            "parent_unit": ["SET", "SET"],
+            "child_code": ["C", "C"],
+            "child_name": ["SHARED BOLT", "SHARED BOLT"],
+            "child_unit": ["NOS", "NOS"],
+            "ratio_of_parent": [1.0, 1.0],
+        }
     )
     rng = np.random.default_rng(3)
     rows, used = [], []
@@ -121,4 +145,3 @@ def test_a_shared_child_is_never_judged_against_one_parent():
         view = balance(ledger, sets, parent, "stated", judge=("strong", "loose", "weak"))
         assert view.judged["C"] is False
         assert (view.account["severity"] == "").all()
-

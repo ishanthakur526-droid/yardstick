@@ -8,7 +8,9 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core import charts, explain, export, requisition as reqs, sets as setcheck
+from core import charts, explain, export
+from core import requisition as reqs
+from core import sets as setcheck
 from core.bundle import load_tables
 from core.fmt import indian, month_label, short_godown, short_item
 from core.ledger import build_ledger, data_notes, item_grid, item_site, ledger_table, overview, peak_idle
@@ -31,20 +33,34 @@ def run_replay(_ledger, code: str, takeover: int, window: int, safety: float, ca
 
 
 @st.cache_data(show_spinner="Replaying all 16 items month by month…")
-def run_all(_ledger, takeover: int, window: int, safety: float, capped: bool = True, basis: str = "use") -> pd.DataFrame:
+def run_all(
+    _ledger, takeover: int, window: int, safety: float, capped: bool = True, basis: str = "use"
+) -> pd.DataFrame:
     rows = []
     for code in _ledger.items["item_code"]:
         r = run_replay(_ledger, code, takeover, window, safety, capped, basis)
         s = r.summary
         rows.append(
             {
-                "code": code, "item": short_item(_ledger.item_name(code)), "unit": r.unit, "lead_days": int(_ledger.items.set_index("item_code").loc[code, "lead_time_days"]),
-                "avg_real": s["avg_real"], "avg_plan": s["avg_plan"], "cut": s["reduction"],
-                "peak_real": s["peak_real"], "peak_plan": s["peak_plan"], "short": s["shortage_pct"],
-                "orders": s["orders_n"], "counts": counts(s),
-                "forecast_error": s["forecast_error"], "forecast_bias": s["forecast_bias"], "span": s["span_months"],
-                "months_served": s["months_served"], "eval_months": s["eval_months"],
-                "plan_recv": s["plan_received"], "real_recv": s["real_received"],
+                "code": code,
+                "item": short_item(_ledger.item_name(code)),
+                "unit": r.unit,
+                "lead_days": int(_ledger.items.set_index("item_code").loc[code, "lead_time_days"]),
+                "avg_real": s["avg_real"],
+                "avg_plan": s["avg_plan"],
+                "cut": s["reduction"],
+                "peak_real": s["peak_real"],
+                "peak_plan": s["peak_plan"],
+                "short": s["shortage_pct"],
+                "orders": s["orders_n"],
+                "counts": counts(s),
+                "forecast_error": s["forecast_error"],
+                "forecast_bias": s["forecast_bias"],
+                "span": s["span_months"],
+                "months_served": s["months_served"],
+                "eval_months": s["eval_months"],
+                "plan_recv": s["plan_received"],
+                "real_recv": s["real_received"],
             }
         )
     return pd.DataFrame(rows)
@@ -97,7 +113,11 @@ if len(_ok):
     )
 
 section = st.segmented_control(
-    "Section", ["See it", "Plan it", "Requisition", "Match the sets", "About the data"], default="See it", required=True, key="section",
+    "Section",
+    ["See it", "Plan it", "Requisition", "Match the sets", "About the data"],
+    default="See it",
+    required=True,
+    key="section",
     label_visibility="collapsed",
 )
 
@@ -141,8 +161,12 @@ if section == "See it":
     k1.metric("Arrived from vendors", f"{indian(row['received'])} {unit}", border=True)
     k2.metric("Actually used", f"{indian(row['used'])} {unit}", border=True)
     last = site.iloc[-1]
-    k3.metric("Idle at project end", f"{indian(last['idle_total'])} {unit}", border=True,
-              help=f"{indian(last['godown_stock'])} in godowns + {indian(last['with_contractors'])} with contractors")
+    k3.metric(
+        "Idle at project end",
+        f"{indian(last['idle_total'])} {unit}",
+        border=True,
+        help=f"{indian(last['godown_stock'])} in godowns + {indian(last['with_contractors'])} with contractors",
+    )
     k4.metric("Peak idle", f"{indian(peak)} {unit}", border=True, help=month_label(peak_month))
     k5.metric("Lead time", f"{int(row['lead_time_days'])} days", border=True)
 
@@ -200,13 +224,30 @@ if section == "Plan it":
     )
     with st.expander("Planner settings"):
         s1, s2, s3 = st.columns(3)
-        takeover = s1.slider("Months on the original plan first", 3, 18, 9, help="A forecast needs history. Until then the project runs on what really arrived.")
+        takeover = s1.slider(
+            "Months on the original plan first",
+            3,
+            18,
+            9,
+            help="A forecast needs history. Until then the project runs on what really arrived.",
+        )
         window = s2.slider("Months of use the forecast averages", 3, 12, 6)
-        safety = s3.slider("Safety margin (standard deviations)", 0.0, 4.0, 2.33, 0.1, help="Higher means fewer shortages and more idle stock.")
+        safety = s3.slider(
+            "Safety margin (standard deviations)",
+            0.0,
+            4.0,
+            2.33,
+            0.1,
+            help="Higher means fewer shortages and more idle stock.",
+        )
 
     with st.expander("Lumino keeps no spare stock. What would that cost on a continuous plan?"):
         trade = []
-        for label, k in (("No spare stock (0)", 0.0), ("Light cushion (1.0)", 1.0), (f"This screen's setting ({safety:.2f})", safety)):
+        for label, k in (
+            ("No spare stock (0)", 0.0),
+            ("Light cushion (1.0)", 1.0),
+            (f"This screen's setting ({safety:.2f})", safety),
+        ):
             d = run_all(ledger, takeover, window, k)
             ok_ = d[d["counts"]]
             trade.append(
@@ -230,17 +271,45 @@ if section == "Plan it":
     kind, message = explain.verdict(r, ok)
     getattr(st, kind)(message)
 
-    st.caption(f"Scored from {month_label(s['eval_from'])}, the first month the planner's own orders could land (lead time {r.lead_months} months).")
+    st.caption(
+        f"Scored from {month_label(s['eval_from'])}, the first month the planner's own orders could land (lead time {r.lead_months} months)."
+    )
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Average idle stock", f"{indian(s['avg_plan'])} {unit}", delta=f"{-s['reduction']:+.0%} vs {indian(s['avg_real'])} really", delta_color="inverse", border=True)
+    m1.metric(
+        "Average idle stock",
+        f"{indian(s['avg_plan'])} {unit}",
+        delta=f"{-s['reduction']:+.0%} vs {indian(s['avg_real'])} really",
+        delta_color="inverse",
+        border=True,
+    )
     peak_change = (s["peak_plan"] / s["peak_real"] - 1) if s["peak_real"] > 0 else 0.0
-    m2.metric("Peak idle stock", f"{indian(s['peak_plan'])} {unit}", delta=f"{peak_change:+.0%} vs {indian(s['peak_real'])} really", delta_color="inverse", border=True)
-    m3.metric("Use it could not supply", f"{s['shortage_pct']:.2%}", delta=f"{s['months_short']} months short", delta_color="off", border=True,
-              help=f"Limit for the saving to count: {MAX_SHORTAGE_SHARE:.0%} of use.")
-    m4.metric("Orders placed", f"{s['orders_n']}", delta=f"{indian(s['orders_qty'])} {unit}", delta_color="off", border=True)
-    m5.metric("Moves between godowns", f"{s['moves_n']}", delta=f"{indian(s['moves_qty'])} {unit}", delta_color="off", border=True,
-              help=f"Stock moved instead of newly ordered. {s['moves_planned_n']} planned at the start of a month "
-                   f"({indian(s['moves_planned_qty'])} {unit}), {s['moves_n'] - s['moves_planned_n']} during the month to cover a godown that ran out.")
+    m2.metric(
+        "Peak idle stock",
+        f"{indian(s['peak_plan'])} {unit}",
+        delta=f"{peak_change:+.0%} vs {indian(s['peak_real'])} really",
+        delta_color="inverse",
+        border=True,
+    )
+    m3.metric(
+        "Use it could not supply",
+        f"{s['shortage_pct']:.2%}",
+        delta=f"{s['months_short']} months short",
+        delta_color="off",
+        border=True,
+        help=f"Limit for the saving to count: {MAX_SHORTAGE_SHARE:.0%} of use.",
+    )
+    m4.metric(
+        "Orders placed", f"{s['orders_n']}", delta=f"{indian(s['orders_qty'])} {unit}", delta_color="off", border=True
+    )
+    m5.metric(
+        "Moves between godowns",
+        f"{s['moves_n']}",
+        delta=f"{indian(s['moves_qty'])} {unit}",
+        delta_color="off",
+        border=True,
+        help=f"Stock moved instead of newly ordered. {s['moves_planned_n']} planned at the start of a month "
+        f"({indian(s['moves_planned_qty'])} {unit}), {s['moves_n'] - s['moves_planned_n']} during the month to cover a godown that ran out.",
+    )
 
     if pd.notna(s["forecast_error"]):
         st.caption(
@@ -253,7 +322,9 @@ if section == "Plan it":
     st.subheader("What the planner says, one month at a time")
     planning_months = [m for i, m in enumerate(r.months) if i >= r.settings.takeover]
     peak_month = s["peak_real_month"] if s["peak_real_month"] in planning_months else planning_months[0]
-    month = st.select_slider("Month", options=planning_months, value=peak_month, format_func=month_label, key="plan_month")
+    month = st.select_slider(
+        "Month", options=planning_months, value=peak_month, format_func=month_label, key="plan_month"
+    )
     row = r.monthly[r.monthly["month"] == month].iloc[0]
     st.caption(
         f"In {month_label(month)} the project really received {indian(row['real_arrived'])} {unit} and the site used {indian(row['used'])}; "
@@ -265,7 +336,9 @@ if section == "Plan it":
     for i, row_ in enumerate(plan_now.to_dict("records")):
         with cards[i % 2].container(border=True):
             st.markdown(f"**{row_['Godown']}**  ·  {row_['Action']}")
-            st.caption(f"In stock {indian(row_['In stock'])} {unit}  ·  expects about {indian(row_['Forecast use / month'])} a month")
+            st.caption(
+                f"In stock {indian(row_['In stock'])} {unit}  ·  expects about {indian(row_['Forecast use / month'])} a month"
+            )
             st.write(row_["Why"])
     d1, d2, _ = st.columns([1, 1, 3])
     d1.download_button(
@@ -295,7 +368,12 @@ if section == "Plan it":
         }
     )
     st.dataframe(table, hide_index=True, column_config=number_columns(table, unit), height=360)
-    st.download_button("Download the replay (CSV)", table.to_csv(index=False).encode("utf-8"), file_name=f"yardstick_{code}_replay.csv", mime="text/csv")
+    st.download_button(
+        "Download the replay (CSV)",
+        table.to_csv(index=False).encode("utf-8"),
+        file_name=f"yardstick_{code}_replay.csv",
+        mime="text/csv",
+    )
 
     st.subheader("All 16 items, same settings")
     everything = run_all(ledger, takeover, window, safety)
@@ -414,29 +492,68 @@ if section == "Requisition":
     )
     b1, b2, b3 = st.columns(3)
     poles = b1.number_input(
-        "Poles on the BOQ", min_value=0, max_value=500000, value=1700, step=100, key="boq_poles",
+        "Poles on the BOQ",
+        min_value=0,
+        max_value=500000,
+        value=1700,
+        step=100,
+        key="boq_poles",
         help="1,700 is an example, the size named in the problem statement. Type the real number from the tender.",
     )
     days_left = b2.number_input(
-        "Days until the material must be on site", min_value=7, max_value=720, value=90, step=7, key="boq_days",
+        "Days until the material must be on site",
+        min_value=7,
+        max_value=720,
+        value=90,
+        step=7,
+        key="boq_days",
         help="Each item's usual lead time is taken off this to give its order-by date.",
     )
     handoff = b3.number_input(
-        "Days procurement needs to place the order", min_value=0, max_value=30, value=7, step=1, key="boq_handoff",
+        "Days procurement needs to place the order",
+        min_value=0,
+        max_value=30,
+        value=7,
+        step=1,
+        key="boq_handoff",
         help="Lumino's procurement team asks for 7 to 10 days. The list must reach them this long before the order-by date.",
     )
 
     with st.expander("More BOQ lines (optional): anything entered here is used as the requirement"):
         grid = pd.DataFrame(
-            {"Item": [short_item(names[c]) for c in codes], "Unit": [ledger.unit(c) for c in codes], "BOQ quantity": [None] * len(codes)}
+            {
+                "Item": [short_item(names[c]) for c in codes],
+                "Unit": [ledger.unit(c) for c in codes],
+                "BOQ quantity": [None] * len(codes),
+            }
         )
         lines_in = st.data_editor(
-            grid, hide_index=True, disabled=["Item", "Unit"], key="boq_lines",
-            column_config={"BOQ quantity": st.column_config.NumberColumn(min_value=0, help="Leave empty when the BOQ has no such line.")},
+            grid,
+            hide_index=True,
+            disabled=["Item", "Unit"],
+            key="boq_lines",
+            column_config={
+                "BOQ quantity": st.column_config.NumberColumn(
+                    min_value=0, help="Leave empty when the BOQ has no such line."
+                )
+            },
         )
-        sheet = st.file_uploader("…or upload the BOQ (CSV or Excel with an item column and a quantity column)", type=["csv", "xlsx"], key="boq_file")
-        template = ledger.items[["item_code", "item_name", "unit"]].rename(columns={"item_code": "Item code", "item_name": "Item", "unit": "Unit"}).assign(Quantity="")
-        st.download_button("BOQ template (CSV)", template.to_csv(index=False).encode("utf-8"), file_name="yardstick_boq_template.csv", mime="text/csv")
+        sheet = st.file_uploader(
+            "…or upload the BOQ (CSV or Excel with an item column and a quantity column)",
+            type=["csv", "xlsx"],
+            key="boq_file",
+        )
+        template = (
+            ledger.items[["item_code", "item_name", "unit"]]
+            .rename(columns={"item_code": "Item code", "item_name": "Item", "unit": "Unit"})
+            .assign(Quantity="")
+        )
+        st.download_button(
+            "BOQ template (CSV)",
+            template.to_csv(index=False).encode("utf-8"),
+            file_name="yardstick_boq_template.csv",
+            mime="text/csv",
+        )
 
     boq = {reqs.POLE_CODE: float(poles)}
     boq.update({c: float(q) for c, q in zip(codes, lines_in["BOQ quantity"]) if pd.notna(q) and q > 0})
@@ -454,16 +571,31 @@ if section == "Requisition":
 
     with st.expander("How the parts are worked out"):
         basis = st.radio(
-            "Parts that come with a set (eye hooks, lugs, bolts) use the ratio…", list(reqs.BASES), format_func=reqs.BASES.get, horizontal=True, key="boq_basis",
+            "Parts that come with a set (eye hooks, lugs, bolts) use the ratio…",
+            list(reqs.BASES),
+            format_func=reqs.BASES.get,
+            horizontal=True,
+            key="boq_basis",
             help="Lumino's file and the site's real use often disagree (see Match the sets). Both are shown below whichever you pick.",
         )
         per_pole = st.checkbox(
-            "Estimate every other item from what this project used per pole", value=True, key="boq_per_pole",
+            "Estimate every other item from what this project used per pole",
+            value=True,
+            key="boq_per_pole",
             help="Only for items the BOQ does not list, and only when poles are on the BOQ.",
         )
         held = st.checkbox("Count stock still with contractors as available", value=False, key="boq_held")
 
-    req = reqs.requisition(ledger, sets_table, boq, basis=basis, per_pole=per_pole, with_contractors=held, days_left=int(days_left), handoff_days=int(handoff))
+    req = reqs.requisition(
+        ledger,
+        sets_table,
+        boq,
+        basis=basis,
+        per_pole=per_pole,
+        with_contractors=held,
+        days_left=int(days_left),
+        handoff_days=int(handoff),
+    )
     stock_label = month_label(req.stock_month)
     if req.unknown:
         st.warning(f"Not items of this project, so left out: {', '.join(req.unknown)}.")
@@ -473,15 +605,26 @@ if section == "Requisition":
         sm = reqs.summary(req)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Items needed", sm["lines"], border=True)
-        m2.metric("Already in stock", sm["covered"], border=True, help=f"Stock as at {stock_label}, the last month in the data.")
+        m2.metric(
+            "Already in stock",
+            sm["covered"],
+            border=True,
+            help=f"Stock as at {stock_label}, the last month in the data.",
+        )
         m3.metric("To buy", sm["to_buy"], border=True)
-        m4.metric("Too late for the deadline", sm["late"], border=True, help="Usual lead time, plus the days procurement needs to place the order, is longer than the days left.")
+        m4.metric(
+            "Too late for the deadline",
+            sm["late"],
+            border=True,
+            help="Usual lead time, plus the days procurement needs to place the order, is longer than the days left.",
+        )
 
         late = req.lines[req.lines["kind"] == "late"]
         soon = req.lines[req.lines["kind"] == "order"]
         if len(late):
             why = lambda r_: (
-                f"{r_.lead_days}-day lead time" if r_.lead_days > days_left
+                f"{r_.lead_days}-day lead time"
+                if r_.lead_days > days_left
                 else f"{r_.lead_days}-day lead time plus {int(handoff)} days for procurement to place the order"
             )
             st.warning(
@@ -494,7 +637,11 @@ if section == "Requisition":
             when = first["send_by"] if handoff else first["order_by"]
             st.info(
                 "Everything to buy can still arrive in time. "
-                + (f"The first buy list has to reach procurement by **{when:%d %b}**" if handoff else f"The first order has to go out by **{when:%d %b}**")
+                + (
+                    f"The first buy list has to reach procurement by **{when:%d %b}**"
+                    if handoff
+                    else f"The first order has to go out by **{when:%d %b}**"
+                )
                 + f", for {short_item(first['item'], 80)}."
             )
         else:
@@ -558,6 +705,7 @@ if section == "Requisition":
             f"- **Next:** read the BOQ straight from Lumino's ERP extract, which their ERP team already updates every day."
         )
 
+
 # --------------------------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def run_calibration(_ledger, sets_table: pd.DataFrame) -> pd.DataFrame:
@@ -589,8 +737,13 @@ if section == "Match the sets":
             "Unit": cal["child_unit"],
             "Ratio as given": [f"{v:g}" for v in cal["stated"]],
             "Ratio from real use": [f"{v:.4g}" for v in cal["observed"]],
-            "Off by": [f"{(f if f >= 1 else 1 / f):.1f}× " + ("too high" if f < 1 else "too low") if not a else "agrees" for f, a in zip(cal["factor"], cal["agrees"])],
-            "Follows its parent month to month": [f"{p} ({c:.2f})" if pd.notna(c) else "–" for p, c in zip(cal["pairing"], cal["monthly_correlation"])],
+            "Off by": [
+                f"{(f if f >= 1 else 1 / f):.1f}× " + ("too high" if f < 1 else "too low") if not a else "agrees"
+                for f, a in zip(cal["factor"], cal["agrees"])
+            ],
+            "Follows its parent month to month": [
+                f"{p} ({c:.2f})" if pd.notna(c) else "–" for p, c in zip(cal["pairing"], cal["monthly_correlation"])
+            ],
         }
     )
     st.dataframe(ratio_table, hide_index=True)
@@ -604,7 +757,11 @@ if section == "Match the sets":
     c1, c2, c3 = st.columns([3, 2, 2])
     parent = c1.selectbox("Set", parents, format_func=lambda p: short_item(pnames[p], 60), key="set_parent")
     basis_label = c2.radio("Ratio to use", ["From real use", "As Lumino gave it"], key="set_basis")
-    loose = c3.checkbox("Also judge loosely paired items", value=False, help="Children whose use only loosely follows the parent's. Expect many flags. Items that several sets share (the G.I. nuts and bolts) are never judged set by set.")
+    loose = c3.checkbox(
+        "Also judge loosely paired items",
+        value=False,
+        help="Children whose use only loosely follows the parent's. Expect many flags. Items that several sets share (the G.I. nuts and bolts) are never judged set by set.",
+    )
     view = run_balance(ledger, sets_table, parent, "observed" if basis_label == "From real use" else "stated", loose)
 
     judged_children = [c for c, j in (view.judged or {}).items() if j]
@@ -618,16 +775,36 @@ if section == "Match the sets":
         cal_m = setcheck.calendar(view)
         n_bad = int((cal_m["status"] != "balanced").sum())
         k1, k2, k3 = st.columns(3)
-        k1.metric("Months out of balance", f"{n_bad} of {len(cal_m)}", border=True, help="At least one godown is off on at least one judged child.")
-        k2.metric("Serious / watch", f"{int((flags['severity'] == 'serious').sum())} / {int((flags['severity'] == 'watch').sum())}", border=True,
-                  help=f"Godown-month accounts off by {setcheck.SERIOUS:.0%} / {setcheck.WATCH:.0%} of all sets issued so far.")
+        k1.metric(
+            "Months out of balance",
+            f"{n_bad} of {len(cal_m)}",
+            border=True,
+            help="At least one godown is off on at least one judged child.",
+        )
+        k2.metric(
+            "Serious / watch",
+            f"{int((flags['severity'] == 'serious').sum())} / {int((flags['severity'] == 'watch').sum())}",
+            border=True,
+            help=f"Godown-month accounts off by {setcheck.SERIOUS:.0%} / {setcheck.WATCH:.0%} of all sets issued so far.",
+        )
         k3.metric("Judged children", ", ".join(short_item(view.names[c], 22) for c in judged_children), border=True)
 
         st.plotly_chart(charts.set_calendar(cal_m))
-        st.caption("Every month at least one godown's account is off on a judged child. Serious: off by 30% or more of all sets issued so far. Watch: 15% or more.")
+        st.caption(
+            "Every month at least one godown's account is off on a judged child. Serious: off by 30% or more of all sets issued so far. Watch: 15% or more."
+        )
 
-        child = st.selectbox("Child", judged_children, format_func=lambda c: short_item(view.names[c], 60), key="set_child")
-        st.plotly_chart(charts.set_account(view.account[view.account["child"] == child], short_item(view.names[child], 28), setcheck.WATCH, setcheck.SERIOUS))
+        child = st.selectbox(
+            "Child", judged_children, format_func=lambda c: short_item(view.names[c], 60), key="set_child"
+        )
+        st.plotly_chart(
+            charts.set_account(
+                view.account[view.account["child"] == child],
+                short_item(view.names[child], 28),
+                setcheck.WATCH,
+                setcheck.SERIOUS,
+            )
+        )
 
         st.subheader("Every flag, worst first")
         if len(flags):
@@ -641,13 +818,26 @@ if section == "Match the sets":
                     "Why": flags["reason"],
                 }
             )
-            st.dataframe(shown, hide_index=True, height=320, column_config={"Why": st.column_config.TextColumn(width="large")})
-            st.download_button("Download the flags (CSV)", shown.to_csv(index=False).encode("utf-8"), file_name=f"yardstick_sets_{parent}.csv", mime="text/csv")
+            st.dataframe(
+                shown, hide_index=True, height=320, column_config={"Why": st.column_config.TextColumn(width="large")}
+            )
+            st.download_button(
+                "Download the flags (CSV)",
+                shown.to_csv(index=False).encode("utf-8"),
+                file_name=f"yardstick_sets_{parent}.csv",
+                mime="text/csv",
+            )
         else:
             st.success("No godown is out of balance on the judged children.")
 
         st.subheader("What is stuck, in one month")
-        pick = st.select_slider("Month", options=ledger.months, value=ledger.months[len(ledger.months) // 2], format_func=month_label, key="set_month")
+        pick = st.select_slider(
+            "Month",
+            options=ledger.months,
+            value=ledger.months[len(ledger.months) // 2],
+            format_func=month_label,
+            key="set_month",
+        )
         snap = setcheck.stuck(view, pick)
         checked = [m for m in view.members if m == view.parent or (view.judged or {}).get(m)]
         st.dataframe(
@@ -656,8 +846,16 @@ if section == "Match the sets":
                     "Godown": snap["godown"].map(short_godown),
                     "Sets that can be finished": [indian(v) for v in snap["sets_possible"]],
                     "Limited by": snap["limiting"].map(lambda m: short_item(view.names[m], 30)),
-                    **{f"{short_item(view.names[m], 22)}: on hand ({view.units[m]})": [indian(v) for v in snap[f"have_{m}"]] for m in checked},
-                    **{f"{short_item(view.names[m], 22)}: waiting": [indian(v) for v in snap[f"waiting_{m}"]] for m in checked},
+                    **{
+                        f"{short_item(view.names[m], 22)}: on hand ({view.units[m]})": [
+                            indian(v) for v in snap[f"have_{m}"]
+                        ]
+                        for m in checked
+                    },
+                    **{
+                        f"{short_item(view.names[m], 22)}: waiting": [indian(v) for v in snap[f"waiting_{m}"]]
+                        for m in checked
+                    },
                 }
             ),
             hide_index=True,

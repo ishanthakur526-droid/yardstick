@@ -8,7 +8,7 @@ import pandas as pd
 
 from . import explain
 from .fmt import month_label
-from .planner import MAX_SHORTAGE_SHARE, Replay, Settings
+from .planner import MAX_SHORTAGE_SHARE, Replay
 from .requisition import BASES, POLE, Requisition
 
 
@@ -43,8 +43,19 @@ def workbook(r: Replay, month: str, name: str, everything: pd.DataFrame) -> byte
         }
     )
     board = everything.rename(
-        columns={"item": "Item", "unit": "Unit", "lead_days": "Lead time (days)", "avg_real": "Idle really (avg)", "avg_plan": "Idle with planner (avg)",
-                 "cut": "Cut", "peak_real": "Peak really", "peak_plan": "Peak with planner", "short": "Shortage share", "orders": "Orders", "counts": "Counts?"}
+        columns={
+            "item": "Item",
+            "unit": "Unit",
+            "lead_days": "Lead time (days)",
+            "avg_real": "Idle really (avg)",
+            "avg_plan": "Idle with planner (avg)",
+            "cut": "Cut",
+            "peak_real": "Peak really",
+            "peak_plan": "Peak with planner",
+            "short": "Shortage share",
+            "orders": "Orders",
+            "counts": "Counts?",
+        }
     ).drop(columns=["code"])
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as xl:
@@ -60,7 +71,9 @@ def workbook(r: Replay, month: str, name: str, everything: pd.DataFrame) -> byte
                 width = 60 if col == "Why" else (26 if col in ("Action", "Item") else 16)
                 ws.set_column(c, c, width, wrap if col in ("Why", "Action", "Item") else None)
             ws.freeze_panes(1, 0)
-        pd.DataFrame({"Assumptions and limits": assumptions(r, name)}).to_excel(xl, sheet_name="Assumptions", index=False)
+        pd.DataFrame({"Assumptions and limits": assumptions(r, name)}).to_excel(
+            xl, sheet_name="Assumptions", index=False
+        )
         xl.sheets["Assumptions"].set_column(0, 0, 130, wrap)
     return buf.getvalue()
 
@@ -81,7 +94,9 @@ def requisition_assumptions(req: Requisition) -> list[str]:
             "('Send to procurement by')."
         )
     if (req.lines["source"] == POLE).any():
-        out.append("Items marked 'Per pole (site)' are estimates from what this project used per pole, not BOQ lines. Replace them with the BOQ's own figures.")
+        out.append(
+            "Items marked 'Per pole (site)' are estimates from what this project used per pole, not BOQ lines. Replace them with the BOQ's own figures."
+        )
     out += [
         "Items bought in whole units are rounded up.",
         "The data has no prices and no orders still on the way, so open orders are not taken off the buy list.",
@@ -95,19 +110,30 @@ def requisition_workbook(req: Requisition) -> bytes:
     lines = req.lines
     buy = pd.DataFrame(
         {
-            "Item": lines["item"], "Unit": lines["unit"], "Needed": lines["needed"], "Where the number comes from": lines["source"],
-            "In godowns": lines["in_godowns"], "With contractors": lines["with_contractors"], "To buy": lines["buy"],
-            "Left in stock after": lines["left_over"], "Lead time (days)": lines["lead_days"],
+            "Item": lines["item"],
+            "Unit": lines["unit"],
+            "Needed": lines["needed"],
+            "Where the number comes from": lines["source"],
+            "In godowns": lines["in_godowns"],
+            "With contractors": lines["with_contractors"],
+            "To buy": lines["buy"],
+            "Left in stock after": lines["left_over"],
+            "Lead time (days)": lines["lead_days"],
             "Order by": [f"{d:%d %b %Y}" if k != "covered" else "" for d, k in zip(lines["order_by"], lines["kind"])],
-            "Send to procurement by": [f"{d:%d %b %Y}" if k != "covered" else "" for d, k in zip(lines["send_by"], lines["kind"])],
+            "Send to procurement by": [
+                f"{d:%d %b %Y}" if k != "covered" else "" for d, k in zip(lines["send_by"], lines["kind"])
+            ],
             "Status": lines["status"],
         }
     )
     derived = lines[lines["at_file"].notna()]
     check = pd.DataFrame(
         {
-            "Item": derived["item"], "Unit": derived["unit"], "Needed at the file's ratio": derived["at_file"],
-            "Needed at the site's ratio": derived["at_site"], "What it says": derived["check"],
+            "Item": derived["item"],
+            "Unit": derived["unit"],
+            "Needed at the file's ratio": derived["at_file"],
+            "Needed at the site's ratio": derived["at_site"],
+            "What it says": derived["check"],
         }
     )
     buf = io.BytesIO()
@@ -120,8 +146,15 @@ def requisition_workbook(req: Requisition) -> bytes:
             ws = xl.sheets[title]
             for c, col in enumerate(df.columns):
                 ws.write(0, c, col, head)
-                ws.set_column(c, c, 60 if col == "What it says" else (46 if col == "Item" else 18), wrap if col in ("Item", "What it says") else None)
+                ws.set_column(
+                    c,
+                    c,
+                    60 if col == "What it says" else (46 if col == "Item" else 18),
+                    wrap if col in ("Item", "What it says") else None,
+                )
             ws.freeze_panes(1, 0)
-        pd.DataFrame({"Assumptions and limits": requisition_assumptions(req)}).to_excel(xl, sheet_name="Assumptions", index=False)
+        pd.DataFrame({"Assumptions and limits": requisition_assumptions(req)}).to_excel(
+            xl, sheet_name="Assumptions", index=False
+        )
         xl.sheets["Assumptions"].set_column(0, 0, 130, wrap)
     return buf.getvalue()

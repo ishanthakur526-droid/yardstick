@@ -22,11 +22,11 @@ CLOSING_STORE = "KANPUR CLOSER"
 
 @dataclass
 class Ledger:
-    items: pd.DataFrame      # item_code, item_name, unit, lead_time_days, role
-    months: list[str]        # every month of the project, 'YYYY-MM', no gaps
-    godowns: list[str]       # locations in the data, closing store last
-    grid: pd.DataFrame       # item x godown x month
-    site: pd.DataFrame       # item x month, whole project
+    items: pd.DataFrame  # item_code, item_name, unit, lead_time_days, role
+    months: list[str]  # every month of the project, 'YYYY-MM', no gaps
+    godowns: list[str]  # locations in the data, closing store last
+    grid: pd.DataFrame  # item x godown x month
+    site: pd.DataFrame  # item x month, whole project
 
     def item_name(self, code: str) -> str:
         return str(self.items.set_index("item_code").loc[code, "item_name"])
