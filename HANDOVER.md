@@ -1,6 +1,6 @@
 # HANDOVER
 
-Last update: Thu 26 Nov 2026, ~19:45 IST. Phase 1 of the v2 rebuild is done and released as **v1.1** (on `main`).
+Last update: Thu 26 Nov 2026, late evening IST. Phase 2 of the v2 rebuild (the lever waterfall and the new Home) is done and released as **v1.2** (on `main`).
 
 The day-one hackathon build is preserved at tag `vch3-submission` (commit e1da49c) and in the frozen repo
 `ishanthakur526-droid/vch3-yardstick`. **Never push to that repo.** This repo (`ishanthakur526-droid/yardstick`)
@@ -10,8 +10,9 @@ carries its history and is where all work continues.
 - **Branches:** work on `dev`, push often (CI runs ruff + pytest on Python 3.12 on every push). Fast-forward `main`
   only at the end of a green phase and tag it (`v1.1`, `v1.2`, ...). The Streamlit app deploys from `main`.
 - **Live app:** not yet deployed from this repo (the owner deploys it; see "Deploy" below).
-- **Tests:** 93, all green locally (real-project tests included); the real-project tests skip in CI.
-- **What v1.1 is:** the day-one features (See it, Plan it, Requisition, Match the sets, About), now working on any
+- **Tests:** 115, all green locally (real-project tests included); the real-project tests skip in CI.
+- **What v1.2 adds:** the levers framing (see "Phase 2, as built" below): Home is the first screen.
+- **What v1.1 was:** the day-one features (See it, Plan it, Requisition, Match the sets, About), now working on any
   project's data:
   - `core/config.py`: the anchor item (what a BOQ counts in), closing stores, set thresholds, labels, read from an
     optional `meta` table or worked out from the records (each guess shown as an assumption).
@@ -21,11 +22,13 @@ carries its history and is where all work continues.
   - `core/synth.py`: a made-up sample project (seed 7). It is the public demo when no real data is loaded and the
     CI dataset.
   - `ui/`: one module per screen; `app.py` is a thin router; the sidebar picks the project.
-- **Results unchanged on the real project** (pinned by tests): 13 of 16 items, median 54% less idle stock; poles
-  29,572 → 15,347 average idle (−48%) with both assumptions; the "What the saving depends on" table reproduces.
-- **Sample project:** 9 of 9 items, median 44% less idle stock under the same two assumptions. Its dynamics were
-  calibrated to the real project's measured profile before the planner was run on it (see the docstring); do not
-  retune it to change the planner's score.
+- **Results on the real project** (pinned by tests), default levers (BOQ cap on, 2 weeks of contractor cover):
+  poles 29,572 → 30,497 (order by use) → 23,688 (+ BOQ cap, stand-in) → 17,551 (+ cover) average idle; 13 of 16
+  items count, median 50% less idle stock. With 0 weeks of cover the old v1.1 headline reproduces exactly (poles
+  15,347; 13 of 16, median 54%).
+- **Sample project:** 9 of 9 items count with both levers, median 43%. Its dynamics were calibrated to the real
+  project's measured profile before the planner was run on it (see the docstring); do not retune it to change the
+  planner's score.
 
 ## Run, test, build the bundle
 ```
@@ -54,31 +57,43 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
 - **Small, clear commits**; no secrets, keys, `.env`, raw CSV/XLSX or bundles in git. After a push that changes
   `core/`, bump the comment line in `requirements.txt` (a hot reload on the host once kept a stale module).
 
+## Phase 2, as built (v1.2)
+- **Lever 1, BOQ cap** (`Settings.capped`): `planner.cap_for` takes the item's BOQ (`Dataset.boq_qty`) when the data
+  has one, else what was really bought, labelled `cap_source = "stand-in"`; `"none"` when switched off.
+- **Lever 2, contractor cover** (`Settings.cover_weeks`, default 2.0, fixed before any result was seen):
+  - Issue = `max(0, use + keep - P)`, then `P <- P + handed out - used`, with `keep = cover x forecast(site use so
+    far)` and cover = weeks / 4.345 months. A godown shortfall eats the top-up first; only use the pool cannot cover
+    counts as a site shortage.
+  - **Two deliberate departures from the earlier note**, both recorded here: (1) the note's formula
+    `use + max(0, cover x f - (P - use))` double-counts use (cover 0 and an empty pool would issue twice the use) and
+    breaks conservation, so the consistent form above is used; (2) the issue rule runs from month 0 with an empty
+    pool, not from takeover with the real pool, because it is a stores rule that needs no planner history and because
+    only then does cover 0 reproduce the old `basis="use"` exactly. That equivalence was proved on scenarios and on
+    every sample and real item before `basis` was removed (commit 0b35c2a); `test_zero_cover_is_the_old_plan_on_site_use`
+    keeps proving it at the simulate level.
+  - `cover_weeks=None` (contractors draw as they really drew) replaced `basis="issues"`. It is now scored on all idle
+    stock (godowns + their real holdings), and their **returns go back into the godowns** (the old basis dropped net
+    returns, which made a small Kanpur item look 93% short).
+  - `planner.decide` is the start-of-month call; `simulate` passes it only the months before. Monday's list uses it too.
+- **`core/levers.py`**: `steps`, `rows`, `item_waterfall`, `portfolio`. **`core/misses.py`**: contractor stock, ratio
+  gaps (a factor beyond 100x is counted as a likely unit mismatch, not the headline), closing-store transfers.
+  **`core/actions.py`**: Monday's list on the real stock position as of a month (stock at the end of the month before
+  plus this month's deliveries; deliveries within one lead time count as on order), scramble-tested.
+- **UI:** `ui/home.py` is the first section; Plan it has the lever controls and a "What each lever is worth" table;
+  number tiles wrap (`ui.common.tiles`) instead of cutting numbers off; widget keys go through `ui.state.k(name)`, which
+  adds the project's fingerprint (after a project switch the browser kept showing the old item's name).
+
 ## Next: the v2 phases
-- **Phase 2: the lever waterfall (the new Home screen).**
-  - Lever 1, the BOQ cap: `simulate`'s `requirement` comes from a BOQ table when the data has one (the sample
-    does). Otherwise the project's real total stands in (Kanpur), labelled as a stand-in. It can be switched off.
-  - Lever 2, contractor cover of N weeks: a project-wide contractor pool `P` in `simulate`.
-    - Godown demand = `use[t] + max(0, cover·f − (P − use[t]))`, then `P = max(P − use[t], cover·f)`, where
-      `f` is the existing leak-free forecast and cover = weeks / 4.345 months.
-    - Before takeover, demand is the real net issue and `P` the real contractor stock.
-    - Score idle as godown stock + `P` in every mode.
-    - `cover_weeks=None` keeps the real issues (today's `basis="issues"`). Prove `cover_weeks=0` equals today's
-      `basis="use"` before removing the old switch, then migrate `test_godown_basis_compares_like_with_like` and
-      `test_real_poles_saving_under_each_assumption`.
-  - New `core/levers.py`: rows Actual → order by use → + BOQ cap → + contractor cover, each with average and peak
-    idle (godowns + contractors), shortage %, and whether it counts.
-  - Home also shows "what the stock report misses": contractor-held stock, set ratios that disagree with the site,
-    and stock sent to the closing store. Plus a preview of this week's actions.
-  - Fix: the five See it tiles cut off numbers at ~800 px width.
 - **Phase 3: actions.**
-  - Weekly action pack (xlsx): orders with order-by dates, transfer vouchers before new orders, contractor issue
-    holds, set alerts, BOM fixes, assumptions. Use an as-of month selector, because a finished project is replayed.
-  - BOM fix sheet; contractor holdings alerts; money layer (rates typed by the visitor plus cost of capital; nothing
-    in rupees without rates).
+  - Weekly action pack (xlsx) built on `core/actions.week`: orders with order-by dates, transfer vouchers before new
+    orders, contractor issue holds, set alerts, BOM fixes, assumptions; the as-of month selector already exists on Home.
+  - BOM fix sheet (start from `core/misses.ratio_gaps` and `sets.calibrate`; add a unit hint for factors beyond 100x);
+    contractor holdings alerts; money layer (rates typed by the visitor plus cost of capital; nothing in rupees without
+    rates).
   - Set-driven child demand with a leak-free bake-off: adopt per child only if it is no worse. Use expanding ratios
-    `cumsum(child[:t]) / cumsum(parent[:t])`, never the full-period calibration.
-  - Then an independent review of the lever maths.
+    `cumsum(child[:t]) / cumsum(parent[:t])`, never the full-period calibration. `planner.forecast` is the shared
+    forecast.
+  - Then an independent review of the lever maths (Opus helper).
 - **Phase 4: data screen.** Upload the 5-CSV pack or one xlsx; a downloadable blank template; a Pass/Warn/Fail
   validator; a fuzzy column mapper (difflib plus synonyms). The uploaded dataset goes in
   `st.session_state["custom_ds"]`, which `ui/state.choose()` already offers in the sidebar.
@@ -94,6 +109,9 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
 - On this Windows machine, a bash heredoc whose text contains `'''` breaks the shell. Write such scripts to a file
   first.
 - The pytest config adds `-q`, so `pytest -q` prints no summary line; count the dots or use `-rA`.
+- The local preview server does not always pick up edits to `ui/` or `core/` modules: stop and start it again before
+  checking a change by eye.
+- AppTest: widget keys carry the project's fingerprint, so read them by prefix (see `widget()` in `tests/test_app.py`).
 
 ## Deploy (owner's clicks, Streamlit Community Cloud, free)
 1. share.streamlit.io → Create app → Deploy a public app from GitHub.

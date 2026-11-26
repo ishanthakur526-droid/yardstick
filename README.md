@@ -1,47 +1,69 @@
 # Yardstick
 
-**A stock and ordering planner that runs on what the site actually uses.**
+**What each stock decision on a project is worth, and Monday's list that follows from it.**
 
-Built in one day at Vibe Coders Hackathon 3 (Kolkata, 21 Nov 2026) for Lumino Industries' problem statement **"1,700 Poles"**: a fixed supply plan kept sending material while the site used far less, and the surplus sat idle in a yard.
+Built in one day at Vibe Coders Hackathon 3 (Kolkata, 21 Nov 2026) for Lumino Industries' problem statement **"1,700 Poles"**: a fixed supply plan kept sending material while the site used far less, and the surplus sat idle in a yard. Rebuilt since around one question an ERP report cannot answer: *which decisions would have kept that stock out of the yard, and by how much?*
 
-On Lumino's real project data (Kanpur, Mar 2023 to Oct 2026, 16 items, 6 godowns, 2.3 lakh stock movements) Yardstick shows what happened, replays the project month by month with a planner that only sees the past, and compares the two honestly.
+## The idea
+Idle stock on a project comes from two decisions the company controls:
 
-## The three jobs from the brief
+1. **How much to buy.** Plan against the bill of quantities (BOQ) instead of pushing the full quantity out early.
+2. **How much to issue.** Give contractors only a few weeks of cover instead of letting them draw months ahead.
 
-| Job | Screen | What it does |
+Yardstick replays the project month by month with a planner that only sees the past. It switches the two decisions on one at a time and scores each one the same way: average and peak idle stock (godowns **and** contractors), and the share of demand left unsupplied. A plan that leaves more than 1% unsupplied does not count. Then it turns the policy into a Monday list for procurement and stores.
+
+## The screens
+| Screen | What it does |
+|---|---|
+| **Home** | The lever waterfall: Actual → order by use → + BOQ cap → + contractor cover (N weeks, a slider), for any item and for all items. Below it, **what the stock report misses** (stock with contractors, set ratios that disagree with the site, stock sent to the closing store) and **Monday's list** as of any month: transfers first, then orders, then contractor issue holds, each with its reason. Every number says how it is computed. |
+| **See it** | For every item and godown, month by month: what came in, what went to contractors, what was used, what sat idle. |
+| **Plan it** | The replay for one item: what the planner would order, hold or move each month and why, scored against what really happened, with both levers adjustable. |
+| **Requisition** | A BOQ in, a buy list out: every part needed, minus stock in hand, with the last day to order each item. |
+| **Match the sets** | The master data's parts-per-set ratios against what the site used, godown by godown. |
+
+## Results on Lumino's Kanpur project (default settings: 2 weeks of contractor cover, BOQ cap on)
+Kanpur, Mar 2023 to Oct 2026, 16 items, 6 godowns. The data has no BOQ, so what the project really bought stands in for it (labelled on screen as a stand-in).
+
+**Poles, average idle stock:**
+| Step | Average idle | vs actual |
 |---|---|---|
-| 1. See it | **See it** | For every item and godown, month by month: what came in, what went to contractors, what was actually used, what sat idle. Poles peaked at 48,991 idle in Feb 2025, the month the site used 1,859. |
-| 2. Plan it | **Plan it** | Replays the project. Each month the planner sees only what was known by then and says what to **order** (because of lead time), **hold**, or **move** from another godown, with a one-line reason per godown. Then it is scored against what really happened: idle stock **and** shortage. A saving that starves the site does not count. |
-| 3. Match the sets | **Match the sets** | Compares Lumino's set ratios with what the site really used, and tracks each child item against its parents godown by godown. Only items that follow their parent closely are judged; the rest are listed for Lumino to explain. |
+| Actual | 29,572 | |
+| Order by use (no cap; contractors draw as they did) | 30,497 | +3% |
+| + BOQ cap | 23,688 | −20% |
+| + contractor cover, 2 weeks | 17,551 | −41% |
 
-## Added after the desk visit: Requisition
-Lumino's head-office procurement starts from a bill of quantities (how many poles, plus the other lines the tender lists), not from a monthly forecast. So **Requisition** takes a BOQ and returns a buy list: every part that is needed, minus what is already in the stores, with the last day to order each item so the deadline holds, and the day the list must reach procurement (Lumino's team asks for 7 to 10 days to place an order). A line typed on the BOQ always wins. Parts that come with a set use the set ratio (Lumino's file or what the site really used; both are shown). Everything else is estimated from what this project used per pole and is labelled as an estimate.
+Peak idle falls from 48,991 to 37,677, with no shortage. With no contractor cover at all (they get exactly what the site uses) the last step reaches 15,347.
 
-Example on the real data: a BOQ of 1,700 poles needs 16 lines. 13 are already in stock, 3 must be bought, and 1 of those cannot arrive in 90 days at its usual lead time. Read through Lumino's own file, the same BOQ would need 220 ring lugs where the site really used about 5,000, and thousands of tonnes of M16 bolts where the site used about half a tonne (the file's unit looks mixed up).
+**All 16 items:** a forecast on its own saves nothing (8 of 16 items keep the site supplied, median cut −3%). With both levers on, 13 of 16 do, with a median **50% less idle stock**. The other three ran short and are marked "does not count".
 
-## Results (default settings, real data)
-- 13 of 16 items: median **54% less idle stock** with under 1% of use unsupplied.
-- Poles: average idle stock 29,572 → 15,347 (−48%), peak 48,991 → 32,490, zero shortage.
-- **What that rests on** (shown on Plan it under "What the saving depends on", each assumption taken away in turn):
-  1. The planner knows the project's total requirement, as a bill of quantities would tell it. The data has none, so what the project really bought (1,17,050 poles) stands in, and the plan never orders past it. Without it: still 13 of 16 items and a median 54%, but poles fall to a 37% cut and the plan would buy 1,33,442 poles.
-  2. Stock reaches contractors only as it is used. In reality contractors drew ahead of use: on poles they held about 11,182 on average. If they keep doing that and only godown stock is compared: 7 of 16 items keep the site supplied, median cut 26%, poles 33%.
-  3. Take both away and ordering by use alone no longer beats what happened on poles (idle stock +4%).
-- Forecast check, all 16 items: at the start of each scored month the forecast is compared with what the site really used over the months an order has to cover. It is off by a median 51% of real use and leans high by a median 35% on purpose (the higher of the last 3 and last 6 months' average). With that cushion the site was fully supplied in 506 of 512 scored item-months.
-- Honest limits: three items ran short and are marked "does not count"; the first 9 months run on the original plan because a forecast needs history; use per godown is estimated because Lumino records usage for the whole project only.
-- Only 1 of 8 stated set ratios agrees with real use (the eye hook). Ring lugs were used at 22 times the stated rate.
+**What the stock report misses:**
+- Contractors held 10,079 poles on average, 38% of all idle poles; at the peak, 15,388 (about 5 months of use).
+- 7 of 8 stated set ratios disagree with what the site used. Ring lugs were used at about 23 times the stated rate; 3 of the 7 look like a unit mismatch (bolts stated in another unit).
+- 1,779 poles went to the closing store at wind-down; 10 of 16 items were sent there, up to 24% of what was received.
+
+**Monday's list for February 2025** (the month of peak idle): 14 transfers, 1 order, 16 contractor issue holds. In other words: don't buy, move what you have, and stop issuing ahead.
+
+**Forecast check:** over the months each order has to cover, the forecast is off by a median 58% of real demand. It leans high (median 38%) on purpose, so the site stays supplied: 508 of 512 scored item-months were fully supplied.
+
+The sample project tells the same story in its own numbers: a forecast alone makes idle stock worse, and with both levers 9 of 9 items keep the site supplied, with a median 43% less idle stock.
+
+## Honesty rules
+- **No look-ahead.** The planner at month *t* reads only months before *t*. Every planning feature has a test that scrambles the future and checks no earlier decision moves (the replay, the contractor pool, Monday's list). The one stated exception is the stand-in cap when a project has no BOQ.
+- **A saving that starves the site does not count** (over 1% of demand unsupplied).
+- **Defaults were fixed before results were seen:** takeover 9 months, forecast window 6, safety margin 2.33, 2 weeks of contractor cover.
+- **Every number comes from code**, and the screen says how it is computed. No AI model sits in the numbers.
 
 ## How it is built
-- `core/ingest.py`, `core/config.py`, `core/dataset.py`: any project's stores extract (items, receipts, contractor moves; sets and transfers optional) becomes monthly tables, with the project's own settings (the item a BOQ counts in, closing stores, set thresholds) read from the data or worked out and shown as assumptions.
+- `core/ingest.py`, `core/config.py`, `core/dataset.py`: any project's stores extract becomes monthly tables with the project's own settings, read from the data or worked out and shown as assumptions.
 - `core/ledger.py`: the monthly ledger from two sums (godown stock, stock with contractors).
-- `core/planner.py`: the replay. At month *t* it reads only months before *t* (tests change the future and check nothing earlier moves), with one stated exception: the cap on total buying is what the project really bought in all, standing in for the BOQ total (a test pins that this is the only way future receipts reach it). Orders cover lead time plus a month of forecast use plus a safety margin; stock above one godown's need moves to a godown about to run short.
-- `core/sets.py`: ratio calibration against real use, pairing strength, running account per godown.
-- `core/explain.py`, `core/export.py`: the reasons per godown and the Excel exports (the plan, and the buy list).
-- `core/requisition.py`: BOQ to buy list. Set ratios (file and site), per-unit estimates, stock in hand, lead times and order-by dates; every line says where its number came from.
-- `core/synth.py`: a made-up sample project with the shape and traps of a real one, calibrated to a real project's measured dynamics. It is the demo when no real data is loaded, and what the automatic tests run on.
+- `core/planner.py`: the replay. `decide` is the start-of-month call (move, order, hold) and only ever sees earlier months. `simulate` runs it month by month, with the two levers: a cap on total buying, and a project-wide contractor pool that may hold N weeks of forecast use (issue = use + cover − what contractors hold; a shortfall eats their cover before it stops the site).
+- `core/levers.py`: the waterfall rows and the all-items summary.
+- `core/misses.py`: contractor-held stock, ratio gaps, closing-store transfers.
+- `core/actions.py`: Monday's list, from the real stock position as of a month, using the same `decide`.
+- `core/sets.py`, `core/requisition.py`, `core/explain.py`, `core/export.py`: set ratios, the BOQ buy list, reasons per godown, Excel exports.
+- `core/synth.py`: a made-up sample project, calibrated to a real project's measured dynamics before the planner was ever run on it. It is the demo when no real data is loaded and what CI tests run on.
 - `app.py` and `ui/`: the Streamlit screens. No logic in them.
-- `tests/`: 90+ tests on made-up scenarios with known answers, on the sample project, on a small project shaped nothing like the original, every screen headless, and, when the data is present, on the real numbers.
-
-No AI model sits in the numbers: every figure is computed by code and can be traced to the records.
+- `tests/`: 115 tests on scenarios with known answers, on the sample project, on a small project shaped nothing like the original, every screen headless, and, when the data is present, on the real numbers.
 
 ## Data
 Real project data is **never in this repository**. `tools/make_bundle.py` sums the raw files to month × item × godown and packs them into one text blob, which the app reads from a host secret (`YARDSTICK_BUNDLE`), the environment, or a git-ignored local file. Without one, the app runs on its built-in sample project. The Kanpur data belongs to Lumino Industries Limited.
