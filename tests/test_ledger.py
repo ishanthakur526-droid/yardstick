@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from core.bundle import find_blob, unpack  # noqa: E402
-from core.ledger import build_ledger, item_site  # noqa: E402
+from conftest import real  # noqa: E402
+from core.ledger import build_ledger, godown_labels, item_site  # noqa: E402
 
 
 def tiny():
@@ -58,6 +58,32 @@ def test_stock_with_contractors_is_project_wide():
     assert s.loc["2024-02", "idle_total"] == 55 + 60 + 20
 
 
+def test_closing_stores_go_last_and_are_not_working_godowns():
+    items = pd.DataFrame(
+        {"item_code": ["P"], "item_name": ["POLE"], "unit": ["PCS"], "lead_time_days": [60], "role": ["Independent"]}
+    )
+    flows = pd.DataFrame(
+        [("2024-01", g, 10, 0, 0, 0, 0) for g in ("ZETA YARD", "ALPHA YARD", "BETA YARD")],
+        columns=["month", "godown", "received", "tr_in", "tr_out", "issue", "ret"],
+    ).assign(item_code="P")
+    used = pd.DataFrame({"item_code": ["P"], "month": ["2024-01"], "used": [5.0]})
+    led = build_ledger(flows, used, items, closing=["ALPHA YARD"])
+    assert led.godowns == ["BETA YARD", "ZETA YARD", "ALPHA YARD"]
+    assert led.working == ["BETA YARD", "ZETA YARD"]
+    assert led.decimals("P") == 0 and led.step("P") == 1.0
+
+
+def test_godown_labels_drop_a_shared_first_word_only():
+    assert godown_labels(["KANPUR NAGAR", "KANPUR DEHAT", "KANPUR CLOSER"], ["KANPUR CLOSER"]) == {
+        "KANPUR NAGAR": "Nagar",
+        "KANPUR DEHAT": "Dehat",
+        "KANPUR CLOSER": "Closing store",
+    }
+    assert godown_labels(["NORTH YARD", "SOUTH YARD"]) == {"NORTH YARD": "North Yard", "SOUTH YARD": "South Yard"}
+    assert godown_labels(["SITE A", "SITE"]) == {"SITE A": "Site A", "SITE": "Site"}  # never strips a name to nothing
+    assert godown_labels(["ONLY STORE"]) == {"ONLY STORE": "Only Store"}
+
+
 def test_cover_months_uses_recent_use():
     s = item_site(tiny(), "P").set_index("month")
     assert pd.isna(s.loc["2024-01", "cover_months"])  # nothing used yet, so cover is undefined
@@ -66,20 +92,18 @@ def test_cover_months_uses_recent_use():
 
 # ---- real data ------------------------------------------------------------------------------
 
-blob = find_blob()
-real = pytest.mark.skipif(blob is None, reason="Lumino bundle not available here")
-
 
 @pytest.fixture(scope="module")
-def ledger():
-    t = unpack(blob)
-    return build_ledger(t["flows"], t["used"], t["items"])
+def ledger(real_ds):
+    return real_ds.ledger
 
 
 @real
 def test_real_every_item_and_godown_present(ledger):
     assert len(ledger.items) == 16
     assert len(ledger.godowns) == 7 and ledger.godowns[-1] == "KANPUR CLOSER"
+    assert ledger.closing == ("KANPUR CLOSER",) and len(ledger.working) == 6
+    assert ledger.label("KANPUR NAGAR") == "Nagar" and ledger.label("KANPUR CLOSER") == "Closing store"
     assert len(ledger.grid) == 16 * 7 * len(ledger.months)
 
 

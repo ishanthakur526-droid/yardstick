@@ -12,8 +12,7 @@ import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from core.bundle import find_blob, unpack  # noqa: E402
-from core.ledger import build_ledger  # noqa: E402
+from conftest import real  # noqa: E402
 from core.planner import MAX_SHORTAGE_SHARE, Settings, counts, replay, simulate, summarise  # noqa: E402
 
 MONTHS = [str(p) for p in pd.period_range("2024-01", periods=24, freq="M")]
@@ -134,14 +133,10 @@ def test_starving_the_site_does_not_count():
 
 # ---- real data ------------------------------------------------------------------------------
 
-blob = find_blob()
-real = pytest.mark.skipif(blob is None, reason="Lumino bundle not available here")
-
 
 @pytest.fixture(scope="module")
-def ledger():
-    t = unpack(blob)
-    return build_ledger(t["flows"], t["used"], t["items"])
+def ledger(real_ds):
+    return real_ds.ledger
 
 
 @real
@@ -162,7 +157,7 @@ def test_real_replay_does_not_use_the_future(ledger):
 
     code, t0 = "MPO010014", 24
     grid = ledger.grid[ledger.grid.item_code == code]
-    working = [g for g in ledger.godowns if g != "KANPUR CLOSER"]
+    working = ledger.working
     mat = lambda col: (
         grid.pivot(index="month", columns="godown", values=col)
         .reindex(index=ledger.months, columns=working)

@@ -71,7 +71,7 @@ LEDGER = make()
 def run(boq, **kw):
     kw.setdefault("today", TODAY)
     kw.setdefault("days_left", 100)
-    kw.setdefault("pole_code", "POLE")
+    kw.setdefault("anchor_code", "POLE")
     return requisition(LEDGER, SETS, boq, **kw)
 
 
@@ -105,7 +105,7 @@ def test_other_items_are_estimated_from_use_per_pole():
     assert line(req, "X")["needed"] == 75 and line(req, "X")["source"] == "Per pole (site)"
     assert line(req, "P")["needed"] == 200 and line(req, "P2")["needed"] == 50
     assert line(req, "C")["needed"] == 200 * 4.0 + 50 * 2.0  # through the set ratios, not a second estimate
-    assert list(run({"POLE": 100}, per_pole=False).lines["item_code"]) == ["POLE"]
+    assert list(run({"POLE": 100}, per_anchor=False).lines["item_code"]) == ["POLE"]
 
 
 def test_units_bought_whole_are_rounded_up():
