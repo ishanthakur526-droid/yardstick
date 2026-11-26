@@ -1,16 +1,17 @@
 """From a bill of quantities to a buy list: what must be bought from outside, and by when.
 
-Lumino's head-office procurement starts from the BOQ (how many poles, plus any other lines the tender lists), works out
+Head-office procurement starts from the BOQ (how many poles, say, plus any other lines the tender lists), works out
 every part that is needed, takes away what is already in the stores, and buys the rest in time for the deadline.
 This module does that sum and records where every number came from.
 
 A needed quantity comes from the first of these that applies:
 
   BOQ line    typed on the BOQ. The BOQ is the requirement; nothing here overrides it.
-  Set ratio   a child of a set (eye hook, lugs, bolts): the parent's quantity times the ratio, either as Lumino's file
-              gives it or as the site really used it. The data pack says the two often disagree, so both are kept and
-              shown next to each other.
-  Per pole    any other item, from what this project used per pole, when poles are on the BOQ. An estimate.
+  Set ratio   a child of a set (eye hook, lugs, bolts): the parent's quantity times the ratio, either as the master
+              data file gives it or as the site really used it. The two often disagree, so both are kept and shown
+              next to each other.
+  Per anchor  any other item, from what this project used per anchor item (per pole), when the anchor is on the BOQ.
+              An estimate.
 
 Stock in hand is the last month of the data (godowns and the closing store). Stock still with contractors counts only
 when asked for. Quantities that are bought in whole units are rounded up.
@@ -26,12 +27,16 @@ import numpy as np
 import pandas as pd
 
 from .ledger import Ledger
-from .planner import unit_step
 from .sets import AGREES_BETWEEN, calibrate
 
-POLE_CODE = "MPO010014"  # PCC pole 8.5 m: the unit a BOQ counts in
-BASES = {"observed": "As the site really used them", "stated": "As in Lumino's file"}
-BOQ, FILE, SITE, POLE = "BOQ line", "Set ratio (file)", "Set ratio (site)", "Per pole (site)"
+BASES = {"observed": "As the site really used them", "stated": "As in the master data file"}
+BOQ, FILE, SITE = "BOQ line", "Set ratio (file)", "Set ratio (site)"
+
+
+def per_anchor_label(noun: str) -> str:
+    return f"Per {noun.strip() or 'unit'} (site)"
+
+
 COLUMNS = [
     "item_code",
     "item",
@@ -93,15 +98,17 @@ def requisition(
     boq: dict[str, float],
     *,
     basis: str = "observed",
-    per_pole: bool = True,
+    per_anchor: bool = True,
     with_contractors: bool = False,
     today: date | None = None,
     days_left: int = 90,
     handoff_days: int = 0,
-    pole_code: str = POLE_CODE,
+    anchor_code: str | None = None,
+    anchor_noun: str = "pole",
 ) -> Requisition:
     """`boq` maps item code to quantity. `days_left` is how long until the material must be on site; `handoff_days` is how
-    long procurement needs to place an order once it has the list (Lumino's team asks for 7 to 10)."""
+    long procurement needs to place an order once it has the list (procurement teams typically ask for 7 to 10).
+    `anchor_code` is the item the BOQ counts in; other items can be estimated per unit of it."""
     if basis not in BASES:
         raise ValueError(f"basis must be one of {list(BASES)}")
     today = today or date.today()
@@ -121,11 +128,13 @@ def requisition(
     used = ledger.site.groupby("item_code")["used"].sum()
     need, source = dict(typed), {c: BOQ for c in typed}
 
-    poles, pole_used = typed.get(pole_code, 0.0), float(used.get(pole_code, 0.0))
-    if per_pole and poles > 0 and pole_used > 0:
+    anchors = typed.get(anchor_code, 0.0) if anchor_code else 0.0
+    anchor_used = float(used.get(anchor_code, 0.0)) if anchor_code else 0.0
+    if per_anchor and anchors > 0 and anchor_used > 0:
+        label = per_anchor_label(anchor_noun)
         for code in items.index:
             if code not in need and code not in children and used.get(code, 0.0) > 0:
-                need[code], source[code] = poles * float(used[code]) / pole_used, POLE
+                need[code], source[code] = anchors * float(used[code]) / anchor_used, label
 
     at_file: dict[str, float] = {}
     at_site: dict[str, float] = {}
@@ -147,7 +156,7 @@ def requisition(
     nan = float("nan")
     rows = []
     for code, qty in need.items():
-        unit, step = str(items.loc[code, "unit"]), unit_step(str(items.loc[code, "unit"]))
+        unit, step = str(items.loc[code, "unit"]), ledger.step(code)
         in_godowns = float(now.loc[code, "godown_stock"]) if code in now.index else 0.0
         held = float(now.loc[code, "with_contractors"]) if code in now.index else 0.0
         on_hand = in_godowns + (held if with_contractors else 0.0)

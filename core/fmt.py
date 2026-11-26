@@ -31,12 +31,6 @@ def month_label(m: str) -> str:
     return pd.Timestamp(m + "-01").strftime("%b %Y")
 
 
-def short_godown(name: str) -> str:
-    if name == "KANPUR CLOSER":
-        return "Closing store"
-    return name.removeprefix("KANPUR ").title()
-
-
 def short_item(name: str, limit: int = 58) -> str:
     name = " ".join(name.split())
     return name if len(name) <= limit else name[: limit - 1].rstrip() + "…"

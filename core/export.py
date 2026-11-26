@@ -9,10 +9,12 @@ import pandas as pd
 from . import explain
 from .fmt import month_label
 from .planner import MAX_SHORTAGE_SHARE, Replay
-from .requisition import BASES, POLE, Requisition
+from .requisition import BASES, Requisition
+
+XLSX_OPTIONS = {"options": {"strings_to_formulas": False, "strings_to_urls": False}}  # text stays text
 
 
-def assumptions(r: Replay, name: str) -> list[str]:
+def assumptions(r: Replay, name: str, source: str = "") -> list[str]:
     s = r.settings
     return [
         f"Item: {name} ({r.unit}); lead time {r.lead_months} months.",
@@ -23,11 +25,15 @@ def assumptions(r: Replay, name: str) -> list[str]:
         "Use is recorded for the whole project only; it is split across godowns by what each godown handed out that month (an estimate).",
         "Stock may move between godowns the same day (the records show same-day transfer vouchers).",
         f"A saving counts only if the plan left under {MAX_SHORTAGE_SHARE:.0%} of use unsupplied.",
-        "Source data: Lumino Industries Limited, shared by Calcutta AI Club for Vibe Coders Hackathon 3. Planning support, not an instruction to buy.",
+        _source_line(source),
     ]
 
 
-def workbook(r: Replay, month: str, name: str, everything: pd.DataFrame) -> bytes:
+def _source_line(source: str) -> str:
+    return (f"Source data: {source}. " if source else "") + "Planning support, not an instruction to buy."
+
+
+def workbook(r: Replay, month: str, name: str, everything: pd.DataFrame, source: str = "") -> bytes:
     """One .xlsx a store-keeper or purchase officer can open: this month's list, the full replay, all items, assumptions."""
     plan_now = explain.month_plan(r, month)
     replay = pd.DataFrame(
@@ -58,7 +64,7 @@ def workbook(r: Replay, month: str, name: str, everything: pd.DataFrame) -> byte
         }
     ).drop(columns=["code"])
     buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="xlsxwriter") as xl:
+    with pd.ExcelWriter(buf, engine="xlsxwriter", engine_kwargs=XLSX_OPTIONS) as xl:
         book = xl.book
         wrap = book.add_format({"text_wrap": True, "valign": "top"})
         head = book.add_format({"bold": True, "bg_color": "#EDE9FE", "border": 1, "text_wrap": True, "valign": "top"})
@@ -71,14 +77,14 @@ def workbook(r: Replay, month: str, name: str, everything: pd.DataFrame) -> byte
                 width = 60 if col == "Why" else (26 if col in ("Action", "Item") else 16)
                 ws.set_column(c, c, width, wrap if col in ("Why", "Action", "Item") else None)
             ws.freeze_panes(1, 0)
-        pd.DataFrame({"Assumptions and limits": assumptions(r, name)}).to_excel(
+        pd.DataFrame({"Assumptions and limits": assumptions(r, name, source)}).to_excel(
             xl, sheet_name="Assumptions", index=False
         )
         xl.sheets["Assumptions"].set_column(0, 0, 130, wrap)
     return buf.getvalue()
 
 
-def requisition_assumptions(req: Requisition) -> list[str]:
+def requisition_assumptions(req: Requisition, source: str = "") -> list[str]:
     held = "plus stock still with contractors" if req.with_contractors else "not counting stock still with contractors"
     out = [
         f"Stock in hand is as at {month_label(req.stock_month)}, the last month in the data: godown stock including the closing store, {held}.",
@@ -93,19 +99,21 @@ def requisition_assumptions(req: Requisition) -> list[str]:
             f"Procurement needs {req.handoff_days} days to place an order, so the list must reach them that long before the order-by date "
             "('Send to procurement by')."
         )
-    if (req.lines["source"] == POLE).any():
+    per = sorted(s for s in req.lines["source"].unique() if str(s).startswith("Per "))
+    if per:
         out.append(
-            "Items marked 'Per pole (site)' are estimates from what this project used per pole, not BOQ lines. Replace them with the BOQ's own figures."
+            f"Items marked '{per[0]}' are estimates from what this project used per unit of the BOQ's main item, not BOQ lines. "
+            "Replace them with the BOQ's own figures."
         )
     out += [
         "Items bought in whole units are rounded up.",
         "The data has no prices and no orders still on the way, so open orders are not taken off the buy list.",
-        "Source data: Lumino Industries Limited, shared by Calcutta AI Club for Vibe Coders Hackathon 3. Planning support, not an instruction to buy.",
+        _source_line(source),
     ]
     return out
 
 
-def requisition_workbook(req: Requisition) -> bytes:
+def requisition_workbook(req: Requisition, source: str = "") -> bytes:
     """One .xlsx for head-office procurement: the buy list, where the ratios disagree, and the assumptions."""
     lines = req.lines
     buy = pd.DataFrame(
@@ -137,7 +145,7 @@ def requisition_workbook(req: Requisition) -> bytes:
         }
     )
     buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="xlsxwriter") as xl:
+    with pd.ExcelWriter(buf, engine="xlsxwriter", engine_kwargs=XLSX_OPTIONS) as xl:
         book = xl.book
         wrap = book.add_format({"text_wrap": True, "valign": "top"})
         head = book.add_format({"bold": True, "bg_color": "#EDE9FE", "border": 1, "text_wrap": True, "valign": "top"})
@@ -153,7 +161,7 @@ def requisition_workbook(req: Requisition) -> bytes:
                     wrap if col in ("Item", "What it says") else None,
                 )
             ws.freeze_panes(1, 0)
-        pd.DataFrame({"Assumptions and limits": requisition_assumptions(req)}).to_excel(
+        pd.DataFrame({"Assumptions and limits": requisition_assumptions(req, source)}).to_excel(
             xl, sheet_name="Assumptions", index=False
         )
         xl.sheets["Assumptions"].set_column(0, 0, 130, wrap)

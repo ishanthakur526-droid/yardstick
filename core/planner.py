@@ -4,7 +4,7 @@ At the start of each month the planner knows the past: what each godown's site a
 each godown, and what is already on order. Then it does three things:
 
   ORDER  enough to cover the lead time plus this month of forecast use, plus a safety margin (never more in total
-         than the project really bought: the data has no BOQ, so what Lumino bought is the stand-in);
+         than the project really bought: the data has no BOQ, so what was bought is the stand-in);
   MOVE   stock above one godown's own lead-time need goes to a godown that would run short this month;
   HOLD   nothing to do.
 
@@ -30,7 +30,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .ledger import CLOSING_STORE, Ledger, item_site
+from .ledger import Ledger, item_site, unit_decimals
 
 MONTH_DAYS = 30
 # A plan that cuts idle stock by letting the site run dry does not count. This is the line we draw.
@@ -61,10 +61,12 @@ class Replay:
     by_godown: pd.DataFrame  # one row per month x godown
     moves: pd.DataFrame  # one row per move
     summary: dict
+    labels: dict[str, str] | None = None  # godown -> short label
 
 
 def unit_step(unit: str) -> float:
-    return 0.01 if unit in {"MT", "KM"} else 1.0
+    """The smallest order quantity for a unit (the ledger's per-item `step` takes an explicit `decimals` into account)."""
+    return 10.0 ** -unit_decimals(unit)
 
 
 def lead_months(lead_days: float) -> int:
@@ -257,10 +259,9 @@ def simulate(
 
 
 def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay:
-    items = ledger.items.set_index("item_code")
-    unit, lead = str(items.loc[code, "unit"]), lead_months(float(items.loc[code, "lead_time_days"]))
+    unit, lead, step = ledger.unit(code), lead_months(ledger.lead_days(code)), ledger.step(code)
     months = ledger.months
-    working = [g for g in ledger.godowns if g != CLOSING_STORE]
+    working = ledger.working
     grid = ledger.grid[ledger.grid["item_code"] == code]
 
     def matrix(col: str) -> np.ndarray:
@@ -288,7 +289,7 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay
         inherited=received,
         requirement=float(received.sum()) if settings.capped else float("inf"),
         lead=lead,
-        step=unit_step(unit),
+        step=step,
         settings=settings,
     )
     monthly["used"] = demand.sum(axis=1) if like_for_like else used
@@ -311,7 +312,8 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay
         monthly=monthly,
         by_godown=by_godown,
         moves=move_df,
-        summary=summarise(monthly, by_godown, move_df, eval_start, float(received.sum()), unit_step(unit), lead),
+        summary=summarise(monthly, by_godown, move_df, eval_start, float(received.sum()), step, lead),
+        labels=dict(ledger.labels),
     )
 
 

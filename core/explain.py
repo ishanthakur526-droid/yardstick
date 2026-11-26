@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .fmt import indian, month_label, short_godown
+from .fmt import indian, month_label
 from .planner import Replay
 
 
@@ -27,6 +27,10 @@ def month_plan(r: Replay, month: str) -> pd.DataFrame:
     unit = r.unit
     planning = i >= r.settings.takeover
     land = r.months[i + lead] if i + lead < len(r.months) else None
+    labels = r.labels or {}
+
+    def label(gd: str) -> str:
+        return labels.get(gd, str(gd).title())
 
     def on_the_way(gd: str) -> float:
         return float(by[(by["godown"] == gd) & (by["month"].isin(r.months[i + 1 : i + lead]))]["arrived"].sum())
@@ -51,8 +55,8 @@ def month_plan(r: Replay, month: str) -> pd.DataFrame:
         mo = float(planned.loc[planned["from"] == gd, "qty"].sum())
         coming = on_the_way(gd)
         order = float(row["order"])
-        sources = ", ".join(short_godown(s) for s in planned.loc[planned["to"] == gd, "from"].unique())
-        targets = ", ".join(short_godown(s) for s in planned.loc[planned["from"] == gd, "to"].unique())
+        sources = ", ".join(label(s) for s in planned.loc[planned["to"] == gd, "from"].unique())
+        targets = ", ".join(label(s) for s in planned.loc[planned["from"] == gd, "to"].unique())
 
         actions, why = [], []
         if not planning:
@@ -93,7 +97,7 @@ def month_plan(r: Replay, month: str) -> pd.DataFrame:
                     )
         rows.append(
             {
-                "Godown": short_godown(gd),
+                "Godown": label(gd),
                 "In stock": have_before,
                 "Forecast use / month": float(row["forecast_use"]),
                 "Action": " + ".join(actions),

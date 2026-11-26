@@ -6,8 +6,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from .fmt import short_godown
-
 COLOR = {
     "arrived": "#3b82f6",
     "issued": "#f59e0b",
@@ -180,13 +178,16 @@ def set_calendar(cal: pd.DataFrame) -> go.Figure:
     return _base(fig, 260).update_layout(margin=dict(l=8, r=8, t=40, b=8))
 
 
-def set_account(view_account: pd.DataFrame, child_name: str, watch: float, serious: float) -> go.Figure:
+def set_account(
+    view_account: pd.DataFrame, child_name: str, watch: float, serious: float, labels: dict[str, str] | None = None
+) -> go.Figure:
     """How far each godown's account for one child is off, as a share of every set issued so far."""
     fig = go.Figure()
     for place, sub in view_account.groupby("godown"):
         if place == "All godowns":
             continue
-        fig.add_trace(go.Scatter(x=_dates(sub["month"]), y=sub["off"], name=short_godown(place), mode="lines"))
+        name = (labels or {}).get(place, str(place).title())
+        fig.add_trace(go.Scatter(x=_dates(sub["month"]), y=sub["off"], name=name, mode="lines"))
     for level, color in ((watch, "rgba(245,158,11,0.9)"), (serious, "rgba(239,68,68,0.9)")):
         for sign in (1, -1):
             fig.add_hline(y=sign * level, line_dash="dot", line_color=color, line_width=1)
@@ -194,7 +195,7 @@ def set_account(view_account: pd.DataFrame, child_name: str, watch: float, serio
     return _base(fig, 340)
 
 
-def godown_heatmap(grid_item: pd.DataFrame, unit: str) -> go.Figure:
+def godown_heatmap(grid_item: pd.DataFrame, unit: str, labels: dict[str, str] | None = None) -> go.Figure:
     """Godown by month: where it piled up."""
     piv = grid_item.pivot(index="godown", columns="month", values="stock")
     places = list(piv.index)
@@ -202,7 +203,7 @@ def godown_heatmap(grid_item: pd.DataFrame, unit: str) -> go.Figure:
         go.Heatmap(
             z=piv.loc[places].values,
             x=_dates(pd.Series(piv.columns)),
-            y=[short_godown(g) for g in places],
+            y=[(labels or {}).get(g, str(g).title()) for g in places],
             colorscale="Purples",
             colorbar=dict(title=unit, thickness=12),
             hovertemplate="%{y} · %{x|%b %Y}<br>%{z:,.0f} " + unit + " idle<extra></extra>",

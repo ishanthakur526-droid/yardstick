@@ -11,28 +11,78 @@ Where a running sum dips below zero (a late entry), it is shown as zero, as the 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 
 FLOW_COLS = ["received", "tr_in", "tr_out", "issue", "ret"]
-CLOSING_STORE = "KANPUR CLOSER"
+# Units counted in fractions (tonnes, kilometres...) keep two decimals; everything else is bought in whole units.
+# An optional `decimals` column on the items table overrides this per item.
+CONTINUOUS_UNITS = {"MT", "KM", "TON", "TONS", "TONNE", "TONNES", "KL", "M3", "CUM"}
+
+
+def unit_decimals(unit: str) -> int:
+    return 2 if str(unit).strip().upper() in CONTINUOUS_UNITS else 0
 
 
 @dataclass
 class Ledger:
-    items: pd.DataFrame  # item_code, item_name, unit, lead_time_days, role
+    items: pd.DataFrame  # item_code, item_name, unit, lead_time_days, role, decimals
     months: list[str]  # every month of the project, 'YYYY-MM', no gaps
-    godowns: list[str]  # locations in the data, closing store last
+    godowns: list[str]  # locations in the data, closing stores last
     grid: pd.DataFrame  # item x godown x month
     site: pd.DataFrame  # item x month, whole project
+    closing: tuple[str, ...] = ()  # locations that only take leftovers at wind-down: never planned for
+    labels: dict[str, str] = field(default_factory=dict)  # godown -> short label for the screen
+    _by_code: dict = field(default_factory=dict, repr=False)
+
+    def __post_init__(self) -> None:
+        self._by_code = self.items.set_index("item_code").to_dict("index")
+
+    @property
+    def working(self) -> list[str]:
+        """The godowns that serve the site (closing stores left out)."""
+        return [g for g in self.godowns if g not in self.closing]
 
     def item_name(self, code: str) -> str:
-        return str(self.items.set_index("item_code").loc[code, "item_name"])
+        return str(self._by_code[code]["item_name"])
 
     def unit(self, code: str) -> str:
-        return str(self.items.set_index("item_code").loc[code, "unit"])
+        return str(self._by_code[code]["unit"])
+
+    def lead_days(self, code: str) -> float:
+        return float(self._by_code[code]["lead_time_days"])
+
+    def decimals(self, code: str) -> int:
+        return int(self._by_code[code]["decimals"])
+
+    def step(self, code: str) -> float:
+        """The smallest quantity this item is ordered in: 1 for whole units, 0.01 for two decimals."""
+        return 10.0 ** -self.decimals(code)
+
+    def label(self, godown: str) -> str:
+        return self.labels.get(godown, str(godown).title())
+
+
+def godown_labels(godowns: list[str], closing: Iterable[str] = ()) -> dict[str, str]:
+    """Short names for the screen: a word every working godown starts with (the city, say) is dropped."""
+    closing = [g for g in godowns if g in set(closing)]
+    working = [g for g in godowns if g not in closing]
+    words = [str(g).split() for g in working]
+    keep = 0
+    if len(words) >= 2 and all(words):
+        for i in range(min(len(w) for w in words) - 1):  # always leave at least one word
+            if len({w[i].upper() for w in words}) != 1:
+                break
+            keep = i + 1
+    labels = {g: (" ".join(w[keep:]) or str(g)).title() for g, w in zip(working, words)}
+    for g in closing:
+        labels[g] = "Closing store" if len(closing) == 1 else " ".join(str(g).split()[keep:] or [str(g)]).title()
+    if len(set(labels.values())) < len(labels):
+        labels = {g: str(g).title() for g in godowns}
+    return labels
 
 
 def month_range(*month_columns: pd.Series) -> list[str]:
@@ -41,9 +91,10 @@ def month_range(*month_columns: pd.Series) -> list[str]:
     return [str(p) for p in pd.period_range(periods.min(), periods.max(), freq="M")]
 
 
-def build_ledger(flows: pd.DataFrame, used: pd.DataFrame, items: pd.DataFrame) -> Ledger:
+def build_ledger(flows: pd.DataFrame, used: pd.DataFrame, items: pd.DataFrame, closing: Iterable[str] = ()) -> Ledger:
+    closing = set(closing)
     months = month_range(flows["month"], used["month"])
-    places = sorted(flows["godown"].unique(), key=lambda g: (g == CLOSING_STORE, g))
+    places = sorted(flows["godown"].unique(), key=lambda g: (g in closing, g))
 
     idx = pd.MultiIndex.from_product([items["item_code"], places, months], names=["item_code", "godown", "month"])
     grid = flows.set_index(["item_code", "godown", "month"])[FLOW_COLS].reindex(idx).fillna(0.0).reset_index()
@@ -68,7 +119,24 @@ def build_ledger(flows: pd.DataFrame, used: pd.DataFrame, items: pd.DataFrame) -
     site = site.reset_index()
 
     ordered = items.copy()
-    return Ledger(items=ordered, months=months, godowns=places, grid=grid, site=site)
+    given = (
+        pd.to_numeric(ordered["decimals"], errors="coerce")
+        if "decimals" in ordered
+        else pd.Series(np.nan, index=ordered.index)
+    )
+    ordered["decimals"] = [
+        int(min(max(d, 0), 4)) if pd.notna(d) else unit_decimals(u) for d, u in zip(given, ordered["unit"])
+    ]
+    shut = tuple(g for g in places if g in closing)
+    return Ledger(
+        items=ordered,
+        months=months,
+        godowns=places,
+        grid=grid,
+        site=site,
+        closing=shut,
+        labels=godown_labels(places, shut),
+    )
 
 
 def item_site(ledger: Ledger, code: str) -> pd.DataFrame:

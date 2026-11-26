@@ -10,11 +10,11 @@ the rest is lying in the store. Two views, both per godown and month:
   STUCK    for any month: how many sets' worth of each member is on hand, which member limits the set, and how much of
            the others is waiting on it.
 
-The ratio problem. The data pack's `ratio_of_parent` is "exactly as Lumino gave it", and the pack warns that it may not
+The ratio problem. The master data's `ratio_of_parent` is what the company's file says, and it may not
 match what the site really used. It often does not: for the eye hook it agrees (about 1 per clamp), but ring-type lugs
 for a three-phase box were used at about 22 times the stated rate. So every child's ratio is also calibrated from what
 the site used: the stated numbers keep their shape and are scaled by one factor so project-wide totals match. The
-screen shows both and lets the user choose. Which one is right for each item is a question for Lumino's people.
+screen shows both and lets the user choose. Which one is right for each item is a question for the site team.
 
 Not every child is issued set by set. How tightly a child's monthly use follows its parent's is shown as the
 "pairing" (strong, loose, weak), so a flag on a loose pairing is read as a hint, not a verdict.
@@ -27,13 +27,34 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .ledger import CLOSING_STORE, Ledger
+from .ledger import Ledger
 
 AGREES_BETWEEN = (0.75, 1.33)  # observed / stated inside this band counts as "agrees"
 WATCH, SERIOUS = 0.15, 0.30  # how far the account may be off, as a share of every set issued so far
-MIN_PARENTS = 2000  # ignore a godown until this many parent units have gone out in total
+MIN_PARENTS = (
+    2000  # ignore a godown until this many parent units have gone out in total (a project's config may scale it)
+)
 MIN_SETS = 300  # and ignore gaps smaller than this many sets
 POOLED = "All godowns"
+
+
+CALIBRATION_COLUMNS = [
+    "set_no",
+    "parent_code",
+    "parent_name",
+    "child_code",
+    "child_name",
+    "child_unit",
+    "stated",
+    "observed",
+    "factor",
+    "agrees",
+    "shared",
+    "monthly_correlation",
+    "pairing",
+    "child_used",
+    "parent_used",
+]
 
 
 @dataclass
@@ -58,6 +79,8 @@ def pairing(correlation: float) -> str:
 
 def calibrate(ledger: Ledger, sets: pd.DataFrame) -> pd.DataFrame:
     """Stated against observed ratio for every parent-child pair, and how tightly the child follows its parent."""
+    if sets is None or sets.empty:
+        return pd.DataFrame(columns=CALIBRATION_COLUMNS)
     used = ledger.site.groupby("item_code")["used"].sum()
     monthly = ledger.site.pivot(index="month", columns="item_code", values="used").fillna(0.0)
     rows = []
@@ -86,7 +109,7 @@ def calibrate(ledger: Ledger, sets: pd.DataFrame) -> pd.DataFrame:
                     "parent_used": float(used[r.parent_code]),
                 }
             )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=CALIBRATION_COLUMNS)
 
 
 def _matrix(ledger: Ledger, code: str, col: str, places: list[str]) -> pd.DataFrame:
@@ -95,10 +118,19 @@ def _matrix(ledger: Ledger, code: str, col: str, places: list[str]) -> pd.DataFr
 
 
 def balance(
-    ledger: Ledger, sets: pd.DataFrame, parent: str, basis: str = "observed", judge: tuple[str, ...] = ("strong",)
+    ledger: Ledger,
+    sets: pd.DataFrame,
+    parent: str,
+    basis: str = "observed",
+    judge: tuple[str, ...] = ("strong",),
+    *,
+    min_parents: float = MIN_PARENTS,
+    min_sets: float = MIN_SETS,
+    cal: pd.DataFrame | None = None,
 ) -> SetView:
-    """`judge` says which pairings are tight enough to flag. A child that is not issued set by set cannot be judged."""
-    cal = calibrate(ledger, sets)
+    """`judge` says which pairings are tight enough to flag. A child that is not issued set by set cannot be judged.
+    `min_parents` and `min_sets` say when a gap is big enough to matter; `cal` saves recomputing the calibration."""
+    cal = calibrate(ledger, sets) if cal is None else cal
     spec = cal[cal["parent_code"] == parent]
     children = list(spec["child_code"])
     # A child that several sets share (the G.I. bolts serve all three) is never judged against one parent: its issues cover every
@@ -111,7 +143,7 @@ def balance(
     }
     names = {parent: str(spec["parent_name"].iloc[0]), **dict(zip(spec["child_code"], spec["child_name"]))}
     units = {parent: str(ledger.unit(parent)), **dict(zip(spec["child_code"], spec["child_unit"]))}
-    places = [g for g in ledger.godowns if g != CLOSING_STORE]
+    places = ledger.working
 
     issued = {m: _matrix(ledger, m, "net_issue", places).clip(lower=0.0) for m in members}
     stock = {m: _matrix(ledger, m, "stock", places) for m in members}
@@ -130,7 +162,7 @@ def balance(
             off = np.where(
                 cum_p > 0, gap / cum_p.where(cum_p > 0, 1), 0.0
             )  # the gap as a share of every set issued so far
-            material = (cum_p >= MIN_PARENTS) & (np.abs(gap) >= MIN_SETS)
+            material = (cum_p >= min_parents) & (np.abs(gap) >= min_sets)
             sev = np.where(
                 ~material, "", np.where(np.abs(off) >= SERIOUS, "serious", np.where(np.abs(off) >= WATCH, "watch", ""))
             )
