@@ -268,3 +268,111 @@ def test_godown_basis_compares_like_with_like(ledger):
         all_idle.monthly["real_idle"] >= godown.monthly["real_idle"] - 1e-9
     ).all()  # contractors hold the difference
     assert godown.monthly["used"].sum() >= all_idle.monthly["used"].sum() - 1e-6  # issues run ahead of use
+
+
+# ---- lever 2: contractor cover ---------------------------------------------------------------
+
+
+def pooled(seed=1, cover=0.5, lead=2, takeover=4):
+    """The same scenario, with `demand` read as the site's use by godown and contractors held to `cover` months."""
+    return dict(scenario(seed=seed, lead=lead, takeover=takeover), cover=cover)
+
+
+def test_zero_cover_is_the_old_plan_on_site_use():
+    """With no cover, contractors get exactly what the site uses: the pool stays empty and every decision, every
+    number, matches the planner that was handed site use directly (the old basis "use")."""
+    for seed in (1, 2, 3):
+        direct = simulate(**scenario(seed=seed))
+        zero = simulate(**pooled(seed=seed, cover=0.0))
+        pd.testing.assert_frame_equal(direct[1], zero[1])
+        assert direct[2] == zero[2]
+        cols = ["plan_arrived", "plan_order", "plan_used", "plan_shortage", "plan_idle"]
+        pd.testing.assert_frame_equal(direct[0][cols], zero[0][cols])
+        assert (zero[0]["plan_pool"] == 0).all()
+
+
+def test_no_look_ahead_with_contractor_cover():
+    """Scramble the site's use from month T0 on: nothing decided or held before T0 may move, the pool included."""
+    for cover in (0.25, 0.5, 1.5):
+        base = pooled(cover=cover)
+        t0 = 12
+        a = simulate(**base)
+        changed = dict(base)
+        demand = base["demand"].copy()
+        demand[t0:] = demand[t0:][::-1] * 7
+        changed["demand"] = demand
+        b = simulate(**changed)
+        upto = MONTHS[: t0 + 1]
+        a_g, a_m = decisions(a)
+        b_g, b_m = decisions(b)
+        pd.testing.assert_frame_equal(
+            a_g[a_g.month.isin(upto)].reset_index(drop=True), b_g[b_g.month.isin(upto)].reset_index(drop=True)
+        )
+        assert [m for m in a_m if m["month"] in upto] == [m for m in b_m if m["month"] in upto]
+        early = MONTHS[:t0]
+        pd.testing.assert_frame_equal(
+            a[0][a[0].month.isin(early)].reset_index(drop=True), b[0][b[0].month.isin(early)].reset_index(drop=True)
+        )
+
+
+def test_the_pool_is_never_negative_and_stock_is_conserved():
+    for seed, cover in ((1, 0.5), (4, 1.0), (5, 2.0)):
+        sc = pooled(seed=seed, cover=cover)
+        monthly, by_godown, _ = simulate(**sc)
+        assert (monthly["plan_pool"] >= 0).all()
+        # what arrived, less what the site used, is in the godowns or with contractors
+        assert monthly["plan_arrived"].sum() - monthly["plan_used"].sum() == pytest.approx(
+            monthly["plan_godown"].iloc[-1] + monthly["plan_pool"].iloc[-1], abs=1e-6
+        )
+        # month by month: the pool moves by what was handed out less what was used
+        pool = monthly["plan_pool"].to_numpy()
+        before = np.concatenate([[0.0], pool[:-1]])
+        assert np.allclose(pool, before + monthly["plan_issued"] - monthly["plan_used"], atol=1e-6)
+        assert (by_godown["stock_end"] >= -1e-9).all()
+
+
+def test_contractors_hold_about_the_cover_they_are_allowed():
+    sc = pooled(cover=1.0)
+    sc["demand"] = np.full((24, 3), 30.0)  # steady use: 90 a month across the site
+    sc["requirement"] = float("inf")
+    monthly, _, _ = simulate(**sc)
+    assert monthly["plan_pool"].iloc[8:].to_numpy() == pytest.approx(90.0, abs=1e-6)
+    thin = simulate(**dict(sc, cover=0.25))[0]
+    assert thin["plan_pool"].iloc[8:].mean() < monthly["plan_pool"].iloc[8:].mean()
+
+
+def test_a_shortfall_eats_the_contractors_cover_before_it_stops_the_site():
+    """When the godowns cannot top contractors up, the site keeps working on what contractors hold; only use the pool
+    cannot cover counts as a shortage."""
+    sc = pooled(cover=1.0, takeover=4)
+    sc["demand"] = np.full((24, 3), 30.0)
+    inherited = np.zeros((24, 3))
+    inherited[0] = 400.0  # one early delivery, then nothing: the cap allows no more
+    sc.update(inherited=inherited, requirement=float(inherited.sum()))
+    monthly, _, _ = simulate(**sc)
+    asked_not_given = (monthly["plan_asked"] - monthly["plan_issued"]).sum()
+    assert asked_not_given > 0
+    assert monthly["plan_shortage"].sum() < asked_not_given
+    assert monthly["plan_used"].sum() + monthly["plan_shortage"].sum() == pytest.approx(sc["demand"].sum())
+
+
+def test_replay_with_zero_cover_reproduces_the_use_basis(sample_ds):
+    """The proof the old switch can go: on every item of the sample project, cover 0 gives the same plan and the same
+    score as basis "use"."""
+    ledger = sample_ds.ledger
+    for code in ledger.items["item_code"]:
+        old = replay(ledger, code, Settings(basis="use"))
+        new = replay(ledger, code, Settings(cover_weeks=0))
+        pd.testing.assert_frame_equal(old.by_godown, new.by_godown)
+        pd.testing.assert_frame_equal(old.moves, new.moves)
+        for k, v in old.summary.items():
+            assert new.summary[k] == (pytest.approx(v, rel=1e-12, nan_ok=True) if isinstance(v, float) else v), k
+
+
+@real
+def test_real_zero_cover_reproduces_the_use_basis(ledger):
+    for code in ledger.items["item_code"]:
+        old, new = replay(ledger, code, Settings(basis="use")), replay(ledger, code, Settings(cover_weeks=0))
+        pd.testing.assert_frame_equal(old.by_godown, new.by_godown)
+        for k, v in old.summary.items():
+            assert new.summary[k] == (pytest.approx(v, rel=1e-12, nan_ok=True) if isinstance(v, float) else v), k

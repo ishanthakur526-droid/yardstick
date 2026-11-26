@@ -1,18 +1,27 @@
 """Plan it: replay the project month by month, deciding only from what was known at the time.
 
-At the start of each month the planner knows the past: what each godown's site activity used so far, what is in
+At the start of each month the planner knows the past: what the godowns were asked to hand out so far, what is in
 each godown, and what is already on order. Then it does three things:
 
-  ORDER  enough to cover the lead time plus this month of forecast use, plus a safety margin (never more in total
-         than the project really bought: the data has no BOQ, so what was bought is the stand-in);
+  ORDER  enough to cover the lead time plus this month of forecast demand, plus a safety margin (never more in total
+         than the cap: the BOQ when the data has one, else what the project really bought, as a stand-in);
   MOVE   stock above one godown's own lead-time need goes to a godown that would run short this month;
   HOLD   nothing to do.
 
 Then the month happens (what the site really used, from the records) and the result is scored:
 
-  idle      stock lying around at month end -> compared with what really happened
-  shortage  use the plan could not have supplied from the whole site's stock -> a plan that "wins" by starving the
-            site does not count (see MAX_SHORTAGE_SHARE)
+  idle      stock lying around at month end, in the godowns and with contractors -> compared with what really happened
+  shortage  use the plan could not have supplied -> a plan that "wins" by starving the site does not count
+            (see MAX_SHORTAGE_SHARE)
+
+Two levers the company controls, each switched on or off:
+
+  BOQ CAP          `capped`: never order more in total than the bill of quantities.
+  CONTRACTOR COVER `cover_weeks`: contractors are issued only enough to end each month holding N weeks of forecast use.
+                   They are one project-wide pool (the records do not say which contractor holds what):
+                       issue  = max(0, use + cover x forecast - pool)
+                       pool  <- pool + what the godowns handed out - use
+                   With 0 weeks they get exactly what the site uses. `None` keeps what they really drew.
 
 Honest limits, all shown on screen:
 - Usage is only recorded for the whole project, so it is spread over the godowns by what each godown handed out
@@ -25,7 +34,7 @@ Honest limits, all shown on screen:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -33,19 +42,23 @@ import pandas as pd
 from .ledger import Ledger, item_site, unit_decimals
 
 MONTH_DAYS = 30
+WEEKS_PER_MONTH = 52 / 12
 # A plan that cuts idle stock by letting the site run dry does not count. This is the line we draw.
 MAX_SHORTAGE_SHARE = 0.01
+# Lever 2's default: issued weekly with about one more week in hand, so contractors end a month holding two weeks of
+# forecast use. Fixed before any result with it was looked at.
+DEFAULT_COVER_WEEKS = 2.0
 
 
 @dataclass(frozen=True)
 class Settings:
     takeover: int = 9  # months of the original plan before the planner starts ordering (it needs history)
-    window: int = 6  # months of recent use the forecast averages
-    sd_window: int = 12  # months of recent use the safety margin is measured on
+    window: int = 6  # months of recent demand the forecast averages
+    sd_window: int = 12  # months of recent demand the safety margin is measured on
     safety: float = 2.33  # safety margin in standard deviations (about a 99% service level on a normal curve)
-    capped: bool = True  # never order more in total than the project really bought (the stand-in for the BOQ total)
-    basis: str = "use"  # "use": plan on what the site used, contractors draw only that, compare with ALL idle stock.
-    # "issues": plan on what the godowns really handed out, compare with godown stock only
+    capped: bool = True  # lever 1: never order more in total than the BOQ (or the stand-in for it)
+    basis: str = "use"  # legacy switch, replaced by cover_weeks: "use" plans on site use, "issues" on real issues
+    cover_weeks: float | None = None  # lever 2: weeks of forecast use contractors may hold (overrides `basis` if set)
 
 
 @dataclass
@@ -101,6 +114,85 @@ def _shares(window_demand: np.ndarray) -> np.ndarray:
     return window_demand / total if total > 0 else np.full(len(window_demand), 1.0 / len(window_demand))
 
 
+def forecast(history: np.ndarray, settings: Settings) -> float:
+    """Next month's demand from the months before it only: the higher of the last 3 and last `window` months' average
+    (it reacts when the site speeds up). No history, no forecast."""
+    if len(history) == 0:
+        return 0.0
+    return float(max(history[-settings.window :].mean(), history[-3:].mean()))
+
+
+@dataclass
+class Decision:
+    """The planner's call at the start of one month."""
+
+    forecast: np.ndarray  # per godown, demand expected this month
+    safety: np.ndarray  # per godown
+    target: np.ndarray  # per godown: cover for the lead time plus this month, with the safety margin
+    have: np.ndarray  # per godown, after the moves
+    moves: list[tuple[int, int, float]] = field(default_factory=list)  # (from, to, qty)
+    order: np.ndarray | None = None  # per godown, lands one lead time later
+
+
+def decide(
+    past_total: np.ndarray,
+    past_by_godown: np.ndarray,
+    have: np.ndarray,
+    coming: np.ndarray,
+    room: float,
+    lead: int,
+    step: float,
+    settings: Settings,
+) -> Decision:
+    """Order, move or hold, from what is known at the start of the month.
+
+    `past_total` and `past_by_godown` are the demand on the godowns in the months BEFORE this one (the caller passes
+    only those, so the future cannot leak in). `have` is stock on hand now, `coming` what lands before a new order could,
+    `room` how much more may still be bought in total."""
+    g_len = len(have)
+    have = have.astype(float).copy()
+    f = forecast(past_total, settings)
+    sd = float(past_total[-settings.sd_window :].std()) if len(past_total) else 0.0
+    share = (
+        _shares(past_by_godown[-settings.window :].sum(axis=0)) if len(past_by_godown) else np.full(g_len, 1 / g_len)
+    )
+    f_g, safe_g = f * share, settings.safety * sd * share
+    need_now = f_g + safe_g
+    target = f_g * (lead + 1) + safe_g * math.sqrt(lead + 1)
+    position = have + coming
+
+    moves: list[tuple[int, int, float]] = []
+    surplus = np.maximum(0.0, np.minimum(have - need_now, position - target))
+    deficit = np.maximum(0.0, need_now - have)
+    for j in np.argsort(-deficit):
+        if deficit[j] <= 0:
+            break
+        for i in np.argsort(-surplus):
+            if i == j or surplus[i] <= 0:
+                continue
+            q = _down(min(deficit[j], surplus[i]), step)
+            if q <= 0:
+                continue
+            have[i] -= q
+            have[j] += q
+            surplus[i] -= q
+            deficit[j] -= q
+            moves.append((int(i), int(j), q))
+            if deficit[j] <= 0:
+                break
+
+    position = have + coming
+    wanted = min(max(0.0, float(target.sum() - position.sum())), room)
+    order = np.zeros(g_len)
+    if wanted > 0:
+        gap = np.maximum(0.0, target - position)
+        weights = gap / gap.sum() if gap.sum() > 0 else share
+        order = _up(wanted * weights, step)
+        if order.sum() > room + 1e-9:  # rounding up must not break the cap
+            order = np.array([_down(x, step) for x in wanted * weights])
+    return Decision(forecast=f_g, safety=safe_g, target=target, have=have, moves=moves, order=order)
+
+
 def simulate(
     *,
     months: list[str],
@@ -111,15 +203,24 @@ def simulate(
     lead: int,
     step: float,
     settings: Settings,
+    cover: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[dict]]:
-    """The core loop. At month t it only reads `demand[:t]`; tests prove changing later months changes nothing before."""
+    """The core loop. At month t it only reads `demand[:t]`; tests prove changing later months changes nothing before.
+
+    `cover=None`: `demand` is what each godown hands out each month, as given.
+    `cover=c` (months): `demand` is the site's use by godown. Contractors are one pool that ends each month holding
+    `c` months of forecast use (the rule runs from the first month; the pool starts empty, as a project does)."""
     t_len, g_len = demand.shape
-    use = demand.sum(axis=1)
-    h, k = settings.takeover, settings.safety
+    pooled = cover is not None
+    site_use = demand.sum(axis=1)
+    asked = np.zeros((t_len, g_len))  # what the godowns were asked to hand out
+    asked_total = np.zeros(t_len)
+    h = settings.takeover
     pipe = np.zeros((t_len + lead + 2, g_len))
     for m in range(0, min(h + lead - 1, t_len - 1) + 1):
         pipe[m] = inherited[m]
     stock = np.zeros(g_len)
+    pool = 0.0
     month_rows, godown_rows, moves = [], [], []
 
     for t in range(t_len):
@@ -133,61 +234,42 @@ def simulate(
         move_out = np.zeros(g_len)
 
         if t >= h:
-            recent = use[max(0, t - settings.window) : t]
-            quick = use[max(0, t - 3) : t]  # the last 3 months: reacts when the site speeds up
-            f, sd = float(max(recent.mean(), quick.mean())), float(use[max(0, t - settings.sd_window) : t].std())
-            share = _shares(demand[max(0, t - settings.window) : t].sum(axis=0))
-            f_g, safe_g = f * share, k * sd * share
-            need_now = f_g + safe_g
-            target = f_g * (lead + 1) + safe_g * math.sqrt(lead + 1)
             coming = pipe[t + 1 : t + lead].sum(axis=0)  # lands before a new order could
-            position = have + coming
-
-            surplus = np.maximum(0.0, np.minimum(have - need_now, position - target))
-            deficit = np.maximum(0.0, need_now - have)
-            for j in np.argsort(-deficit):
-                if deficit[j] <= 0:
-                    break
-                for i in np.argsort(-surplus):
-                    if i == j or surplus[i] <= 0:
-                        continue
-                    q = _down(min(deficit[j], surplus[i]), step)
-                    if q <= 0:
-                        continue
-                    have[i] -= q
-                    have[j] += q
-                    surplus[i] -= q
-                    deficit[j] -= q
-                    move_out[i] += q
-                    move_in[j] += q
-                    moves.append(
-                        {
-                            "month": months[t],
-                            "when": "start of month",
-                            "from": godowns[i],
-                            "to": godowns[j],
-                            "qty": round(q, 2),
-                        }
-                    )
-                    if deficit[j] <= 0:
-                        break
-
-            position = have + coming
-            wanted = max(0.0, float(target.sum() - position.sum()))
-            room = max(0.0, requirement - float(pipe.sum()))  # never buy more in total than the project really bought
-            wanted = min(wanted, room)
-            if wanted > 0:
-                gap = np.maximum(0.0, target - position)
-                weights = (
-                    gap / gap.sum() if gap.sum() > 0 else _shares(demand[max(0, t - settings.window) : t].sum(axis=0))
+            room = max(0.0, requirement - float(pipe.sum()))  # never buy more in total than the cap
+            d = decide(asked_total[:t], asked[:t], have, coming, room, lead, step, settings)
+            f_g, safe_g, target, have, order = d.forecast, d.safety, d.target, d.have, d.order
+            for i, j, q in d.moves:
+                move_out[i] += q
+                move_in[j] += q
+                moves.append(
+                    {
+                        "month": months[t],
+                        "when": "start of month",
+                        "from": godowns[i],
+                        "to": godowns[j],
+                        "qty": round(q, 2),
+                    }
                 )
-                order = _up(wanted * weights, step)
-                if order.sum() > room + 1e-9:  # rounding up must not break the cap
-                    order = np.array([_down(x, step) for x in wanted * weights])
-                pipe[t + lead] += order
+            pipe[t + lead] += order
 
-        # The month happens. Each godown serves its own use first; leftovers cover other godowns (same-day transfers).
-        need = demand[t]
+        # What the godowns are asked for this month.
+        top_up = 0.0
+        if pooled:
+            keep = cover * forecast(site_use[:t], settings)  # what contractors may hold at month end
+            total = max(0.0, site_use[t] + keep - pool)
+            top_up = total - max(0.0, site_use[t] - pool)  # the part that only refills their cover
+            if site_use[t] > 0:
+                need = demand[t] * (total / site_use[t])
+            elif total > 0:
+                need = total * _shares(asked[max(0, t - settings.window) : t].sum(axis=0))
+            else:
+                need = np.zeros(g_len)
+        else:
+            need = demand[t]
+        asked[t] = need
+        asked_total[t] = need.sum()
+
+        # The month happens. Each godown serves its own demand first; leftovers cover other godowns (same-day transfers).
         own = np.minimum(need, have)
         unmet = need - own
         left = have - own
@@ -217,6 +299,20 @@ def simulate(
                     break
         stock = left
         short = np.maximum(unmet, 0.0)
+        handed = float(need.sum() - short.sum())
+
+        if pooled:
+            # A shortfall eats into the contractors' cover first; only what the pool cannot cover stops the site.
+            site_short = max(0.0, float(short.sum()) - top_up)
+            used_t = float(site_use[t]) - site_short
+            pool = pool + handed - used_t
+            if pool < 1e-9 * max(1.0, float(site_use[t])):
+                pool = 0.0
+            short_g = short * (site_short / short.sum()) if short.sum() > 0 else short
+        else:
+            site_short = float(short.sum())
+            used_t = handed
+            short_g = short
 
         for g in range(g_len):
             if order[g] > 0:
@@ -239,8 +335,8 @@ def simulate(
                     "move_out": move_out[g],
                     "order": order[g],
                     "action": action,
-                    "use_est": need[g],
-                    "shortage": short[g],
+                    "asked": need[g],
+                    "shortage": short_g[g],
                     "stock_end": stock[g],
                 }
             )
@@ -249,16 +345,31 @@ def simulate(
                 "month": months[t],
                 "plan_arrived": arrivals.sum(),
                 "plan_order": order.sum(),
-                "plan_used": need.sum() - short.sum(),
-                "plan_shortage": short.sum(),
-                "plan_idle": stock.sum(),
+                "plan_asked": need.sum(),  # what the godowns were asked to hand out
+                "plan_issued": handed,  # what they did hand out
+                "plan_used": used_t,
+                "plan_shortage": site_short,
+                "plan_godown": stock.sum(),
+                "plan_pool": pool,  # held by contractors at month end (0 unless the pool is tracked)
+                "plan_idle": stock.sum() + pool,
                 "planning": t >= h,
             }
         )
     return pd.DataFrame(month_rows), pd.DataFrame(godown_rows), moves
 
 
-def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay:
+def cap_for(settings: Settings, received_total: float, boq: float | None) -> tuple[float, str]:
+    """Lever 1: the most the planner may buy in total, and where that number comes from."""
+    if not settings.capped:
+        return float("inf"), "none"
+    if boq is not None and math.isfinite(boq) and boq > 0:
+        return float(boq), "boq"
+    return float(received_total), "stand-in"
+
+
+def replay(ledger: Ledger, code: str, settings: Settings = Settings(), boq: float | None = None) -> Replay:
+    """`boq`: the bill of quantities for this item when the data has one. Without it, what the project really bought
+    stands in for it (the one place the future enters: a project knows its BOQ at the start)."""
     unit, lead, step = ledger.unit(code), lead_months(ledger.lead_days(code)), ledger.step(code)
     months = ledger.months
     working = ledger.working
@@ -275,22 +386,28 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay
     site = item_site(ledger, code).set_index("month").reindex(months)
     used = site["used"].to_numpy()
     received = matrix("received")
-    like_for_like = settings.basis == "issues"
-    if like_for_like:
+    cover = None
+    like_for_like = settings.cover_weeks is None and settings.basis == "issues"
+    if settings.cover_weeks is not None:
+        demand = used[:, None] * allocation_shares(matrix("net_issue"))
+        cover = max(0.0, float(settings.cover_weeks)) / WEEKS_PER_MONTH
+    elif like_for_like:
         # What the godowns really handed out, so contractors keep holding what they really held: compare godown stock with godown stock.
         demand = np.clip(matrix("net_issue"), 0.0, None)
     else:
         demand = used[:, None] * allocation_shares(matrix("net_issue"))
 
+    cap, cap_source = cap_for(settings, float(received.sum()), boq)
     monthly, by_godown, moves = simulate(
         months=months,
         godowns=working,
         demand=demand,
         inherited=received,
-        requirement=float(received.sum()) if settings.capped else float("inf"),
+        requirement=cap,
         lead=lead,
         step=step,
         settings=settings,
+        cover=cover,
     )
     monthly["used"] = demand.sum(axis=1) if like_for_like else used
     monthly["forecast"] = by_godown.groupby("month", sort=True)["forecast_use"].sum().reindex(months).to_numpy()
@@ -301,6 +418,10 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay
 
     move_df = pd.DataFrame(moves, columns=["month", "when", "from", "to", "qty"])
     eval_start = min(settings.takeover + lead, len(months) - 1)
+    summary = summarise(
+        monthly, by_godown, move_df, eval_start, cap if math.isfinite(cap) else float(received.sum()), step, lead
+    )
+    summary["cap_source"] = cap_source
     return Replay(
         code=code,
         unit=unit,
@@ -312,7 +433,7 @@ def replay(ledger: Ledger, code: str, settings: Settings = Settings()) -> Replay
         monthly=monthly,
         by_godown=by_godown,
         moves=move_df,
-        summary=summarise(monthly, by_godown, move_df, eval_start, float(received.sum()), step, lead),
+        summary=summary,
         labels=dict(ledger.labels),
     )
 
@@ -333,8 +454,10 @@ def summarise(
     pr, pp = ev["real_idle"], ev["plan_idle"]
     avg_real, avg_plan = float(pr.mean()), float(pp.mean())
     gb = by_godown[by_godown["month"].isin(ev["month"])]
-    # What an order has to get right is the whole span it covers: the lead time plus this month. Score the forecast there.
-    f, u = monthly["forecast"].to_numpy(), monthly["used"].to_numpy()
+    # What an order has to get right is the whole span it covers: the lead time plus this month. Score the forecast
+    # there, against what the godowns were asked for (with no contractor cover, that is what the site used).
+    f = monthly["forecast"].to_numpy()
+    u = (monthly["plan_asked"] if "plan_asked" in monthly else monthly["used"]).to_numpy()
     span = lead + 1
     starts = range(eval_start, len(u) - lead)
     guess = np.array([f[t] * span for t in starts])
@@ -351,7 +474,7 @@ def summarise(
         "eval_from": str(ev["month"].iloc[0]),
         "eval_months": int(len(ev)),
         "span_months": span,
-        "forecast_error": wape,  # how far the forecast was from what the next lead-time-plus-one months really used
+        "forecast_error": wape,  # how far the forecast was from what the next lead-time-plus-one months really asked
         "forecast_bias": bias,  # positive: the forecast ran high on the whole
         "months_served": int(len(ev) - (ev["plan_shortage"] > 0.5 * step).sum()),
         "avg_real": avg_real,
