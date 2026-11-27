@@ -1,8 +1,8 @@
 # HANDOVER
 
-Last update: Fri 27 Nov 2026, IST. Phase 4 of the v2 rebuild (the Your data screen: a visitor runs Yardstick on their
-own project's records) is done and released as **v1.4** (on `main`). Phase 3 (the actions) was reviewed by Opus and
-released as v1.3.
+Last update: Fri 27 Nov 2026, IST. Phase 5 of the v2 rebuild (hardening, profiling, Opus security review #2) is done
+and released as **v2.0-rc** (on `main`). Phase 4 (the Your data screen) was v1.4; Phase 3 (the actions, Opus review #1)
+was v1.3. Next: Phase 6, the private follow-up package (outside this repo), then v2.0.
 
 The day-one hackathon build is preserved at tag `vch3-submission` (commit e1da49c) and in the frozen repo
 `ishanthakur526-droid/vch3-yardstick`. **Never push to that repo.** This repo (`ishanthakur526-droid/yardstick`)
@@ -12,7 +12,10 @@ carries its history and is where all work continues.
 - **Branches:** work on `dev`, push often (CI runs ruff + pytest on Python 3.12 on every push). Fast-forward `main`
   only at the end of a green phase and tag it (`v1.1`, `v1.2`, ...). The Streamlit app deploys from `main`.
 - **Live app:** not yet deployed from this repo (the owner deploys it; see "Deploy" below).
-- **Tests:** 190, all green locally (real-project tests included); the real-project tests skip in CI.
+- **Tests:** 229, all green locally (real-project tests included); the real-project tests skip in CI.
+- **What v2.0-rc adds:** hardening (see "Phase 5, as built" below): every name from data shown as text, upload and
+  bundle limits that a hostile file cannot get past, an upload's results kept in that visitor's session only, every
+  dependency locked, and the speed of every screen measured.
 - **What v1.4 adds:** the **Your data** screen (see "Phase 4, as built" below): template, upload, table and column
   matching, a Pass / Warn / Fail check, and the project built into the visitor's session.
 - **What v1.3 adds:** the actions (see "Phase 3, as built" below): the weekly action pack on Home, the BOM fix
@@ -56,11 +59,14 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
 - **A saving that starves the site does not count** (under 1% of use short). Defaults (takeover 9, window 6, safety
   2.33) were fixed before looking at results; change one only with a walk-forward check and a note on screen.
 - **Every number on screen comes from code** and the screen says how it is computed. No AI model in the numbers.
-- **Data from a file is untrusted:** names shown in markdown go through `core.safe.md`; CSV downloads through
-  `core.safe.csv_bytes`; Excel writers use `export.XLSX_OPTIONS` (no formulas or links from text). Never put data
-  into `unsafe_allow_html`.
-- **Caches:** `st.cache_data` functions take the dataset fingerprint as a hashed argument and the dataset as `_ds`.
-  Never put an uploaded dataset in `st.cache_resource`.
+- **Data from a file is untrusted:** names shown anywhere Streamlit renders Markdown (markdown, alerts, captions,
+  widget labels, help, metric values and deltas, radio and segmented-control options) go through `core.safe.md`;
+  names in chart text through `core.safe.chart_text`; CSV downloads through `core.safe.csv_bytes`; Excel writers use
+  `export.XLSX_OPTIONS` (no formulas or links from text). Never put data into `unsafe_allow_html`.
+  `tests/test_hostile.py` checks all of it on every screen: run it after any UI change.
+- **Caches:** anything computed from a dataset goes through `ui.state.cached` (not `st.cache_data` directly): it
+  takes the fingerprint as a hashed argument and the dataset as `_ds`, shares results for the built-in projects, and
+  keeps an upload's results in that visitor's session. Never put an uploaded dataset in `st.cache_resource`.
 - **Small, clear commits**; no secrets, keys, `.env`, raw CSV/XLSX or bundles in git. After a push that changes
   `core/`, bump the comment line in `requirements.txt` (a hot reload on the host once kept a stale module).
 
@@ -136,9 +142,9 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
     project in the same format).
   - `read_upload(name, bytes)` returns `Sheet`s of text and never raises (a file it cannot read comes back with
     `problem` set, in plain words). Limits: `MAX_FILE_MB` 50 (also `server.maxUploadSize` in `.streamlit/config.toml`),
-    `MAX_ROWS` 500,000 per file or sheet, `MAX_TOTAL_ROWS` 1,000,000, `MAX_UNPACKED_MB` 400 (zip sizes checked before
-    Excel is opened), `MAX_SHEETS` 20. Excel goes through pandas, which opens it read-only; openpyxl parses with
-    defusedxml (installed). CSV: encoding (UTF-8, else cp1252) and delimiter (`,` `;` tab `|`) worked out. The header
+    `MAX_ROWS` 500,000 per file or sheet, `MAX_TOTAL_ROWS` 1,000,000, `MAX_UNPACKED_MB` (zip sizes checked before
+    Excel is opened), `MAX_SHEETS` 20, and since Phase 5 the column, cell, file, zip-ratio and shared-text limits (see
+    "Phase 5, as built"). Excel is opened by openpyxl read-only; it parses with defusedxml (installed). CSV: encoding (UTF-8, else cp1252) and delimiter (`,` `;` tab `|`) worked out. The header
     line is found within the first 20 lines (exports often put a title above it). The template's own "How to fill"
     sheet is skipped when the workbook comes back.
   - `guess_table` (the file or sheet name decides when it names a table, else the table whose needed columns are all
@@ -156,7 +162,7 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
   picker and a "Match the columns" panel (open when a needed column was not found); the check as a wrapped list (it
   reads on a phone); a project name; "Use this data" (a callback: builds the project into
   `st.session_state["custom_ds"]`, selects it in the sidebar, opens Home). "Remove my data" undoes it. Parsed files
-  and the report are kept in `st.session_state` (`data_sheets`, `data_report`) for that session only. Widget keys start
+  and the report are kept in `st.session_state` (`data_sheets`, `data_report`) for that session only, dropped once the project is built. Widget keys start
   `data_` and are not in `WIDGET_PREFIXES`, so they survive a project switch.
 - **Tested:** the sample round-trips through its own workbook to an identical ledger; an export with its own headers,
   title lines, day-first dates and `;` reads to the same ledger as the original; **Lumino's real raw export reads to
@@ -165,19 +171,83 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
   Checked by eye in the built-in browser with real uploads (three CSVs with ERP headers, and the sample workbook) at
   desktop and phone size, through to Home on the uploaded project.
 
-## Next: the v2 phases
-- **Phase 5: hardening.** Already in place from Phase 4: upload size, row and unpacked-size limits, Excel read-only,
-  defusedxml. Still to do:
-  - The BOQ upload in `ui/buylist.py` goes through `upload.read_upload` (it still calls `pd.read_csv` /
-    `pd.read_excel` directly).
-  - A size cap on the bundle's decompression and a clear message for a corrupt bundle; replace the broad excepts that
-    are not guarding visitor input (`bundle.py`).
-  - Memory on the free host: a 231,000-row upload is held as text (sheets, then the mapped tables) until the visitor
-    leaves; consider dropping `data_sheets` after "Use this data", or storing the text more compactly.
-  - Profile and keep each screen under 2 s warm (the real project: reading its 20 MB CSV takes ~3 s, the check ~2 s,
-    the build ~1.5 s, each once per upload).
-  - Then the Opus security review (ingest and upload, export, caches, markdown), and release v2.0-rc.
-- **Phase 6: the private follow-up package** for Rohit, in `F:\ClacuttaAIClub_Hackathon\followup\`, never in this repo.
+## Phase 5, as built (v2.0-rc)
+- **Names are text, never markup.** Streamlit renders Markdown in far more than `st.markdown`: metric values and
+  deltas, widget labels, help tooltips, radio and segmented-control options, expander and tab labels. Units and item
+  names reached metric values unescaped (See it, Plan it, Match the sets); fixed with `md()`. Plotly reads `<a href>`,
+  `<b>` and the like in chart text: units, godown labels and child names now go through `safe.chart_text`
+  (HTML-escaped; Plotly shows `&lt;` as `<`). **`tests/test_hostile.py`** runs every section, and the Your data screen,
+  on a project whose codes, names, units, godowns and project fields carry `![i](https://...)`, `[l](...)`, `<img>`
+  and `<a href>`, and checks every string Streamlit will render as Markdown (walking the element protos) and every
+  Plotly string. Selectbox options, text-input values and dataframes are plain text and skipped. It also checks that
+  every workbook (plan, buy list, upload format, pack) writes formula-like text as a string. Both checks were
+  mutation-tested (they fail with the escape or `XLSX_OPTIONS` removed).
+- **BOQ upload** (Requisition): `requisition.read_boq` reads through `upload.read_upload` (same size, row and
+  unpacked-size limits, title lines, `;`, thousands separators), takes the first sheet with an item and a quantity
+  column, refuses more than `MAX_BOQ_LINES` (20,000), never raises, and says why. Read once per upload
+  (`boq_read@...` in session state).
+- **Bundle** (`core/bundle.py`): empty, cut short when pasted (the inflater did not reach the end), unreadable tables,
+  more than `MAX_TABLES`, and runaway JSON nesting all raise `BundleError` with a plain reason; the inflate cap stays.
+  `state.bundled` shows the reason and the sample for a damaged bundle, and logs (without content) a bundle whose
+  tables are not a project's.
+- **Memory:** after "Use this data", `data_sheets` and `data_report` are dropped. On Lumino's 231,000-row export they
+  held ~92 MB and ~62 MB (tracemalloc) against ~1 MB for the built project.
+- **Dependencies:** `requirements.in` holds the seven direct pins; `requirements.txt` is the full lock
+  (`uv pip compile requirements.in --universal --python-version 3.12 -o requirements.txt`, seeded from the tested
+  venv; keep the "Changing this file..." comment as its first line).
+- **Speed** (`tools/profile_sections.py`, AppTest on this laptop; warm = caches filled, what a visitor clicking around
+  sees; cold = first open after the process starts, shared by every visitor afterwards):
+
+  | Section | Sample cold | Sample warm | Real cold | Real warm |
+  |---|---|---|---|---|
+  | Home | 6.06 s* | 0.40 s | 4.33 s | 0.47 s |
+  | See it | 0.73 s | 0.19 s | 0.59 s | 0.24 s |
+  | Plan it | 1.82 s | 0.31 s | 2.76 s | 0.39 s |
+  | Requisition | 0.79 s | 0.19 s | 0.59 s | 0.23 s |
+  | Match the sets | 0.85 s | 0.32 s | 1.13 s | 0.35 s |
+  | About the data | 0.35 s | 0.02 s | 0.36 s | 0.02 s |
+  | Your data | 0.47 s | 0.02 s | 0.35 s | 0.02 s |
+
+  \* includes importing the app and building the sample. Every section is under 0.5 s warm. Plan it built its Excel
+  file on every render; it is now built on click (0.59 s -> 0.39 s warm, real). Home's cold time is the lever
+  replays (48 at ~57 ms, pandas-bound), Monday's list and the holdings; the planner was not reworked for it (the
+  maths is reviewed and pinned). **Wake the app and open Home once before sending the link**: the caches are shared,
+  so every later visitor gets the warm times.
+
+- **Opus security review #2, 27 Nov** (ingest and upload, exports, caches, markdown; it ran proofs on small crafted
+  files). **Must-fix, both fixed with tests (`tests/test_limits.py`):**
+  1. Upload parsing blew a few KB up into GBs or minutes: a CSV with a 1,000-cell header (every row padded to it), an
+     xlsx with one cell in column XFD per row (pandas pads every row to the widest), 48 MB of short lines (the
+     delimiter guess split the whole file), many files read before the total-rows check, fuzzy matching of long
+     headers on every click. Now: Excel read with openpyxl directly (read-only, values only), rows cut to
+     `MAX_COLUMNS` (100) as they are read, one `MAX_CELLS` budget (4,000,000: Lumino's real export uses 1,650,404) for
+     all files of an upload, `MAX_FILES` (12), the delimiter guessed from the top 64 KB, header names cut to 100
+     characters and close spelling tried only on short ones, guesses worked out once per upload, a zip part over
+     `MAX_ZIP_RATIO` (100x; real ones are ~7-8x) or over `MAX_SHARED_TEXT_MB` (40) of shared text refused,
+     `MAX_UNPACKED_MB` down to 200. The real export still reads in ~3 s.
+  2. A ~1 KB upload with dates in the years 1000 and 9999 built a ledger grid of billions of cells. Now
+     `ingest.parse_dates` treats dates outside 1990-2100 as unreadable (left out, with a warning); the check fails a
+     span over `ledger.MAX_MONTHS` (120) and a project over `MAX_ITEMS` (2,000), `MAX_GODOWNS` (100) or `MAX_GRID`
+     (250,000 item-godown-months; Kanpur is ~4,000); `build_ledger` refuses the same before building its grid.
+
+  **Should-fix, fixed:** the BOQ box label used `anchor_noun` from the data unescaped (now `md()`, and the hostile
+  project sets it); `client.showErrorDetails = "none"` (no traceback or exception text reaches a visitor); an upload's
+  results sat in the shared `st.cache_data` for up to 6 hours, against the page's "nothing is stored" (now
+  `state.cached`, session only); the shared-strings bomb (above). **Notes, left as they are:** Streamlit's own
+  dataframe toolbar "Download as CSV" does not neutralise formulas (only the visitor's own upload or the trusted
+  bundle reach it); `md()` leaves bare URLs and line breaks (a `www.` link in a name becomes clickable; own session or
+  bundle only); a `BundleError` quotes up to 40 characters of a table name from the secret; slider floats are not
+  snapped to the step (a crafted value makes a new cache entry, bounded by `max_entries` and the TTL); a failed
+  upload's log line may hold fragments of its values; `_unique` can still give two columns one name (the file is then
+  refused with a vague message); Streamlit holds every uploaded file in memory while the uploader has it.
+  **Checked and sound:** zip sizes and CRCs, defusedxml (billion laughs and external entities refused), the CSV field
+  limit, every workbook and CSV download, static-only HTML, chart text, the secret (never printed, not in git
+  history), no cross-session path (fingerprint keys, nothing mutates the shared datasets, Streamlit clamps widget
+  values), deferred downloads fail with a generic error.
+
+## Next
+- **Phase 6: the private follow-up package** for Rohit, in `F:\ClacuttaAIClub_Hackathon\followup\`, never in this
+  repo (see the plan's Phase 6 list), then the v2.0 release.
 
 ## Known quirks
 - Streamlit `AppTest` cannot drive file uploads. Inject a dataset with `at.session_state["custom_ds"] = ds`, then
@@ -193,6 +263,10 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
 - The pytest config adds `-q`, so `pytest -q` prints no summary line; count the dots or use `-rA`.
 - The local preview server does not always pick up edits to `ui/` or `core/` modules: stop and start it again before
   checking a change by eye.
+- AppTest: a dataset injected as `custom_ds` has its results in `st.session_state["_upload_results"]`
+  (`state.SESSION_RESULTS`), not in `st.cache_data`.
+- `tests/test_hostile.py` walks the element protos AppTest holds (`at._tree`) for every string Streamlit renders as
+  Markdown; if a Streamlit upgrade renames a proto type or field, check its `PLAIN` / `PLAIN_FIELDS` lists.
 - AppTest: widget keys carry the project's fingerprint, so read them by prefix (see `widget()` in `tests/test_app.py`).
 - AppTest can drive a `st.data_editor`: set its key to `{"edited_rows": {row: {column: value}}, "added_rows": [],
   "deleted_rows": []}` and run (see `test_rupees_appear_only_after_a_rate_is_typed`). AppTest does not click download

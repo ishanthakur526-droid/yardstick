@@ -68,7 +68,10 @@ The sample project tells the same story in its own numbers: a forecast alone mak
 - `core/sets.py`, `core/requisition.py`, `core/explain.py`, `core/export.py`: set ratios, the BOQ buy list, reasons per godown, Excel exports.
 - `core/synth.py`: a made-up sample project, calibrated to a real project's measured dynamics before the planner was ever run on it. It is the demo when no real data is loaded and what CI tests run on.
 - `app.py` and `ui/`: the Streamlit screens. No logic in them.
-- `tests/`: 147 tests on scenarios with known answers, on the sample project, on a small project shaped nothing like the original, every screen headless, and, when the data is present, on the real numbers.
+- `tests/`: 229 tests on scenarios with known answers, on the sample project, on a small project shaped nothing like the original, every screen headless (including on a project whose names are full of links, images and HTML, which must all show as plain text), hostile uploads, and, when the data is present, on the real numbers.
+
+## Safety
+Data from a file is treated as untrusted. Names show as plain text everywhere (never as links, images or HTML), downloads never carry a formula or a link from the data, and an upload is held to limits a hostile file cannot get past: file size, rows, columns, cells, unpacked size, dates (1990 to 2100) and project size. A visitor's upload, and everything worked out from it, stays in their own session. Every dependency is pinned to a tested version (`requirements.txt` is a full lock of `requirements.in`).
 
 ## Data
 Real project data is **never in this repository**. `tools/make_bundle.py` sums the raw files to month × item × godown and packs them into one text blob, which the app reads from a host secret (`YARDSTICK_BUNDLE`), the environment, or a git-ignored local file. Without one, the app runs on its built-in sample project. A visitor can also upload a project of their own on the **Your data** screen; it is held only in their browser session. The Kanpur data belongs to Lumino Industries Limited.
