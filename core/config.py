@@ -26,6 +26,19 @@ import pandas as pd
 MIN_PARENTS_SHARE = 0.0084
 MIN_SETS_SHARE = 0.00126
 ANCHOR_ROLES = {"anchor", "primary"}
+META_KEYS = (
+    "project",
+    "company",
+    "source",
+    "about",
+    "anchor_code",
+    "anchor_noun",
+    "closing_stores",
+    "min_parents",
+    "min_sets",
+    "requisition_example",
+    "sample",
+)
 
 
 @dataclass(frozen=True)

@@ -75,12 +75,18 @@ def _text(s: pd.Series) -> pd.Series:
 
 
 def parse_dates(s: pd.Series) -> pd.Series:
-    """ISO dates first (2024-01-31); if most do not read that way, day-first dates as Indian ERPs write them (31-01-2024)."""
+    """ISO dates first (2024-01-31); if most do not read that way, day-first dates as Indian ERPs write them (31-01-2024),
+    or Excel's day numbers (45322) when a spreadsheet stored the dates as plain numbers."""
     iso = pd.to_datetime(s, errors="coerce", format="ISO8601")
     if iso.isna().mean() <= 0.5:
         return iso
     day_first = pd.to_datetime(s, errors="coerce", dayfirst=True, format="mixed")
-    return day_first if day_first.notna().sum() > iso.notna().sum() else iso
+    best = day_first if day_first.notna().sum() > iso.notna().sum() else iso
+    numbers = pd.to_numeric(s, errors="coerce")
+    serial = numbers.between(20_000, 80_000)  # Excel's day numbers for the years 1954 to 2119
+    if serial.mean() > 0.5 and serial.sum() > best.notna().sum():
+        return pd.to_datetime(numbers.where(serial), unit="D", origin="1899-12-30")
+    return best
 
 
 def _dated(df: pd.DataFrame | None, qty: str) -> pd.DataFrame:

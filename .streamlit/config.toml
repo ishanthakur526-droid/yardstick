@@ -6,3 +6,4 @@ gatherUsageStats = false
 
 [server]
 headless = true
+maxUploadSize = 50  # MB a file; keep in step with core/upload.py MAX_FILE_MB
