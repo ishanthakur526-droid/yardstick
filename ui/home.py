@@ -7,13 +7,14 @@ import math
 import pandas as pd
 import streamlit as st
 
-from core import charts, levers
+from core import charts, holdings, levers, money
+from core import pack as weekly
 from core.dataset import Dataset
 from core.fmt import indian, month_label, short_item
 from core.misses import closing_store, contractor_stock, contractor_stock_all, ratio_gaps
 from core.planner import DEFAULT_COVER_WEEKS, MAX_SHORTAGE_SHARE, Settings
 from core.safe import csv_bytes, md
-from ui.common import lever_rows_table
+from ui.common import XLSX, lever_rows_table
 from ui.state import k, planner_limits, run_calibration, run_levers, run_week
 
 
@@ -73,12 +74,13 @@ def render(ds: Dataset) -> None:
 
     st.subheader(f"All {len(codes)} items, same levers")
     _portfolio(tables)
+    rates, _ = _rupees(ds, tables, code)
 
     st.subheader("What the stock report misses")
     _misses(ds, anchor)
 
     st.subheader("Monday's list")
-    _monday(ds, rows, base.takeover, float(weeks), boq_cap)
+    _monday(ds, rows, base.takeover, float(weeks), boq_cap, rates, code)
 
 
 def plural(n: int, word: str) -> str:
@@ -221,7 +223,99 @@ def _misses(ds: Dataset, anchor: str) -> None:
             )
 
 
-def _monday(ds: Dataset, rows: pd.DataFrame, takeover: int, weeks: float, boq_cap: bool) -> None:
+def _rupees(ds: Dataset, tables: dict[str, pd.DataFrame], code: str) -> tuple[dict[str, float], float]:
+    """The money layer: rates the visitor types, kept in this browser session only. Nothing in rupees without them."""
+    ledger = ds.ledger
+    with st.expander("In rupees: type your own rates (kept for this session only)"):
+        st.caption(
+            "The records have no prices, so nothing here is in rupees until you type a rate. Rates stay in this browser "
+            "session: they are not saved and nobody else sees them."
+        )
+        base = pd.DataFrame(
+            {
+                "code": ledger.items["item_code"],
+                "Item": ledger.items["item_name"].map(lambda s: short_item(s, 48)),
+                "Unit": ledger.items["unit"],
+                "Rate (₹ per unit)": [None] * len(ledger.items),
+            }
+        )
+        edited = st.data_editor(
+            base,
+            key=k("home_rates"),
+            hide_index=True,
+            disabled=["code", "Item", "Unit"],
+            column_config={
+                "code": None,
+                "Rate (₹ per unit)": st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
+            },
+        )
+        annual = (
+            st.number_input(
+                "Cost of capital (% a year)",
+                min_value=0.0,
+                max_value=60.0,
+                value=money.DEFAULT_COST_OF_CAPITAL * 100,
+                step=0.5,
+                key=k("home_capital"),
+                help="What money tied up in stock costs a year. 12% is a placeholder: type your own.",
+            )
+            / 100
+        )
+        rates = money.clean_rates(dict(zip(edited["code"], edited["Rate (₹ per unit)"])))
+        if not rates:
+            return {}, annual
+        if code in rates:
+            v = money.item_value(tables[code], rates[code], annual)
+            st.markdown(f"**{md(short_item(ledger.item_name(code), 60))}** at your rate:")
+            st.dataframe(
+                pd.DataFrame(
+                    {
+                        "Step": v["label"],
+                        "Average idle value": v["idle_value"].map(money.rupees),
+                        "Carrying cost a year": v["carrying"].map(money.rupees),
+                        "Saving a year vs actual": [
+                            "–" if i == 0 else money.rupees(x) for i, x in enumerate(v["saving"])
+                        ],
+                        "Counts?": [
+                            "–" if i == 0 else ("Yes" if c else "No: ran short") for i, c in enumerate(v["counts"])
+                        ],
+                    }
+                ),
+                hide_index=True,
+            )
+        p = money.portfolio(tables, rates, annual)
+        st.markdown(f"**All {plural(int(p['items_priced'].iloc[0]), 'priced item')}:**")
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Step": p["label"],
+                    "Average idle value": p["idle_value"].map(money.rupees),
+                    "Carrying cost a year": p["carrying"].map(money.rupees),
+                    "Saving a year that counts": [
+                        "–" if i == 0 else money.rupees(x) for i, x in enumerate(p["saving_counts"])
+                    ],
+                    "Items that count": [f"{a} of {b}" for a, b in zip(p["items_counting"], p["items_priced"])],
+                }
+            ),
+            hide_index=True,
+        )
+        st.caption(
+            "How: average idle stock (godowns and contractors, over the scored months) × your rate; carrying cost = that "
+            f"× {annual:.1%} a year (cost of capital only: storage, theft and damage would add to it). The saving a year "
+            "is the drop in carrying cost from Actual, added up only over items whose plan kept the site supplied."
+        )
+    return rates, annual
+
+
+def _monday(
+    ds: Dataset,
+    rows: pd.DataFrame,
+    takeover: int,
+    weeks: float,
+    boq_cap: bool,
+    rates: dict[str, float] | None = None,
+    code: str | None = None,
+) -> None:
     ledger = ds.ledger
     months = ledger.months[takeover:] or ledger.months[-1:]
     default = rows["peak_month"].iloc[0] if rows["peak_month"].iloc[0] in months else months[0]
@@ -257,9 +351,26 @@ def _monday(ds: Dataset, rows: pd.DataFrame, takeover: int, weeks: float, boq_ca
         }
     )
     st.dataframe(show, hide_index=True, height=min(420, 38 + 35 * len(show)))
-    st.download_button(
+    settings = Settings(takeover=takeover, cover_weeks=weeks, capped=boq_cap)
+
+    def pack_bytes() -> bytes:  # built only when the button is clicked
+        return weekly.workbook(weekly.build(ds, month, settings, rates, actions=week))
+
+    b1, b2 = st.columns(2)
+    b1.download_button(
+        "Download the weekly action pack (Excel)",
+        pack_bytes,
+        file_name=f"yardstick_weekly_pack_{month}.xlsx",
+        mime=XLSX,
+        type="primary",
+        help="Transfers, orders with order-by dates, issue holds, set alerts, BOM fixes and the assumptions, as of "
+        "this Monday.",
+    )
+    b2.download_button(
         "Download Monday's list (CSV)", csv_bytes(show), file_name=f"yardstick_monday_{month}.csv", mime="text/csv"
     )
+    if code is not None:
+        _holdings(ds, code, takeover, weeks)
     with st.expander("How this list is computed"):
         st.markdown(
             f"- **Stock** is each godown's real stock at the end of the month before, plus what lands this month. "
@@ -270,5 +381,29 @@ def _monday(ds: Dataset, rows: pd.DataFrame, takeover: int, weeks: float, boq_ca
             "- **Orders:** what is missing for the lead time plus this month, with the safety margin, never past the cap. "
             "Contractors' stock beyond their allowed cover counts first, because it is used before anything new is "
             "issued.\n"
-            f"- **Issue holds:** contractors hold more than {weeks:g} weeks of forecast use. The quantity is the excess."
+            f"- **Issue holds:** contractors hold more than {weeks:g} weeks of forecast use. The quantity is the excess.\n"
+            "- **Child items** are forecast from their sets (the parents' forecast times the ratio the site has shown "
+            "so far) only where that has done no worse than their own history up to this month.\n"
+            "- **The pack** adds set alerts (at the end of last month) and BOM fixes (ratios from site use so far); a "
+            "person approves every line."
+        )
+
+
+def _holdings(ds: Dataset, code: str, takeover: int, weeks: float) -> None:
+    ledger = ds.ledger
+    with st.expander(
+        f"Contractor holdings against the {weeks:g}-week rule: {md(short_item(ledger.item_name(code), 48))}"
+    ):
+        s = holdings.series(ledger, code, Settings(takeover=takeover, cover_weeks=weeks))
+        chart = pd.DataFrame(
+            {"With contractors": s["held"].to_numpy(), "The rule allows": s["allowed"].to_numpy()},
+            index=s["month"],
+        )
+        st.line_chart(chart, x_label="Start of month", y_label=ledger.unit(code))
+        n = int(s["alert"].sum())
+        st.caption(
+            f"Over the rule at the start of {plural(n, 'month')} of {len(s)}. How: held = issues − returns − recorded "
+            f"use, running total, at the end of the month before; allowed = {weeks:g} weeks of forecast use (the "
+            "same forecast as the planner, from earlier months only). Contractors are one pool: the records do not say "
+            "which contractor holds what."
         )

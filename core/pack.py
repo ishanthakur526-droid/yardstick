@@ -257,13 +257,19 @@ def assumptions(ds: Dataset, month: str, settings: Settings, priced: bool) -> li
 
 
 def workbook(pack: Pack) -> bytes:
-    """The pack as one .xlsx. Text from the data stays text: no formulas or links (`export.XLSX_OPTIONS`)."""
+    """The pack as one .xlsx."""
+    return write_sheets(pack.sheets)
+
+
+def write_sheets(sheets: dict[str, pd.DataFrame]) -> bytes:
+    """Tables as one .xlsx, one sheet each. Text from the data stays text: no formulas or links
+    (`export.XLSX_OPTIONS`)."""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter", engine_kwargs=XLSX_OPTIONS) as xl:
         book = xl.book
         wrap = book.add_format({"text_wrap": True, "valign": "top"})
         head = book.add_format({"bold": True, "bg_color": "#EDE9FE", "border": 1, "text_wrap": True, "valign": "top"})
-        for title, df in pack.sheets.items():
+        for title, df in sheets.items():
             df.to_excel(xl, sheet_name=title, index=False, startrow=1, header=False)
             ws = xl.sheets[title]
             for c, col in enumerate(df.columns):

@@ -67,3 +67,19 @@ def test_switching_projects_forgets_the_last_projects_choices(minimal_ds):
     assert_clean(at)
     assert widget(at, "see_item") in {"A100", "B200", "C300"}
     assert len([key for key in at.session_state.keys() if str(key).startswith("see_item@")]) == 1
+
+
+def test_rupees_appear_only_after_a_rate_is_typed():
+    at = run("Home", "sample")
+    assert_clean(at)
+    assert not [m for m in at.markdown if "priced item" in m.value]  # no rates: nothing in rupees
+    key = next(str(x) for x in at.session_state.keys() if str(x).startswith("home_rates@"))
+    at.session_state[key] = {
+        "edited_rows": {0: {"Rate (₹ per unit)": 1500.0}},
+        "added_rows": [],
+        "deleted_rows": [],
+    }
+    at.run()
+    assert_clean(at)
+    assert [m for m in at.markdown if "1 priced item" in m.value]
+    assert any("₹" in str(df.value.to_dict()) for df in at.dataframe)

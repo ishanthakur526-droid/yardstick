@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from core import actions as monday_list
-from core import ingest, levers, synth
+from core import ingest, levers, setplan, synth
 from core import sets as setcheck
 from core.bundle import BundleError, load_tables
 from core.dataset import Dataset, from_tables
@@ -158,6 +158,11 @@ def run_week(
 @st.cache_data(show_spinner=False, max_entries=32, ttl=TTL)
 def run_calibration(fp: str, _ds: Dataset) -> pd.DataFrame:
     return setcheck.calibrate(_ds.ledger, _ds.sets)
+
+
+@st.cache_data(show_spinner="Comparing two ways to forecast each child…", max_entries=32, ttl=TTL)
+def run_bakeoff(fp: str, _ds: Dataset, takeover: int) -> pd.DataFrame:
+    return setplan.bakeoff(_ds.ledger, _ds.sets, Settings(takeover=takeover))
 
 
 @st.cache_data(show_spinner=False, max_entries=64, ttl=TTL)

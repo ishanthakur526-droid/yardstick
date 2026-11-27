@@ -5,12 +5,14 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core import charts
+from core import bomfix, charts
+from core import pack as weekly
 from core import sets as setcheck
 from core.dataset import Dataset
 from core.fmt import indian, month_label, short_item
 from core.safe import csv_bytes, file_part
-from ui.state import k, run_balance, run_calibration
+from ui.common import XLSX
+from ui.state import k, planner_limits, run_bakeoff, run_balance, run_calibration
 
 
 def render(ds: Dataset) -> None:
@@ -52,6 +54,8 @@ def render(ds: Dataset) -> None:
         "'Off by' says how far the stated ratio is from real use. 'Follows its parent' is how closely a child's monthly "
         "use tracks its parent's: only a child that tracks closely (0.8 or more) can be judged set by set."
     )
+    _fix_sheet(ds, cal)
+    _bakeoff(ds)
 
     parents = list(dict.fromkeys(cal["parent_code"]))
     pnames = dict(zip(cal["parent_code"], cal["parent_name"]))
@@ -188,3 +192,65 @@ def _judged(ds: Dataset, view, judged_children: list[str], parent: str) -> None:
         hide_index=True,
     )
     st.caption("'Waiting' is the stock of each member that cannot be used until the limiting one arrives.")
+
+
+def _fix_sheet(ds: Dataset, cal: pd.DataFrame) -> None:
+    fixes = bomfix.fix_sheet(cal)
+    todo = fixes[fixes["action"] != bomfix.KEEP]
+    unit = int((fixes["action"] == bomfix.UNIT).sum())
+    st.markdown(
+        f"**BOM fix sheet: {len(todo)} of {len(fixes)} ratios to review**"
+        + (f", {unit} of them likely a unit mismatch (check the unit first)." if unit else ".")
+        + " Nothing changes in the master data: the sheet proposes, a person approves each line."
+    )
+    sheet = bomfix.sheet_for_people(fixes)
+    notes = pd.DataFrame(
+        {
+            "Assumptions and limits": [
+                "Observed ratio: what the child really used, against what the stated ratios predict from its parents' "
+                "use, over the whole project. A child several sets share gets one factor for all its ratios.",
+                "Inside 0.75x to 1.33x counts as agreeing. More than 100 times off is more likely a unit mismatch "
+                "(kilograms against tonnes) than a wrong count: fix the unit, not the ratio.",
+                "Suggested ratios are rounded to three significant figures. Fill in the approved ratio, who approved it "
+                "and when; nothing is applied automatically.",
+                f"Source data: {ds.cfg.source}. Planning support, not an instruction.",
+            ]
+        }
+    )
+    st.download_button(
+        "Download the BOM fix sheet (Excel)",
+        lambda: weekly.write_sheets({"BOM fixes": sheet, "Assumptions": notes}),
+        file_name=f"yardstick_bom_fixes_{file_part(ds.cfg.project)}.xlsx",
+        mime=XLSX,
+    )
+
+
+def _bakeoff(ds: Dataset) -> None:
+    _, _, takeover = planner_limits(ds)
+    b = run_bakeoff(ds.fingerprint, ds, takeover)
+    if b.empty:
+        return
+    st.markdown(
+        f"**Plan children from their parents?** For {b['adopt'].sum()} of {len(b)} children, forecasting from the "
+        "parents (times the ratio the site had shown so far) was no worse than the child's own history, so Monday's "
+        "list plans them from their sets, month by month, only while that holds."
+    )
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "Child": b["child_name"].map(lambda n: short_item(n, 40)),
+                "Unit": b["unit"],
+                "Its sets": b["parents"].map(lambda n: short_item(n, 50)),
+                "Error, own history": [f"{v:.0%}" for v in b["wape_item"]],
+                "Error, from its sets": [f"{v:.0%}" for v in b["wape_set"]],
+                "Plan from sets?": ["Yes" if a else "No" for a in b["adopt"]],
+            }
+        ),
+        hide_index=True,
+    )
+    st.caption(
+        "How: at every scored month, each way forecasts the lead time plus this month (what an order has to get "
+        "right), from earlier months only; the ratio is learned as the child's use so far over its parents' use so far, "
+        "never from the whole project. Error = the sum of misses over the sum of what the child really used "
+        "(WAPE), over the same months as the replay."
+    )
