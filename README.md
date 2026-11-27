@@ -20,6 +20,7 @@ Yardstick replays the project month by month with a planner that only sees the p
 | **Plan it** | The replay for one item: what the planner would order, hold or move each month and why, scored against what really happened, with both levers adjustable. |
 | **Requisition** | A BOQ in, a buy list out: every part needed, minus stock in hand, with the last day to order each item. |
 | **Match the sets** | The master data's parts-per-set ratios against what the site used, godown by godown; a **BOM fix sheet** to approve line by line (nothing is applied automatically); and, per child, whether planning it from its sets beats its own history. |
+| **Your data** | Run it on your own project's stores records. Download a blank template (or the sample project in the same format), upload one Excel workbook or the CSV files, and each file's table and columns are recognised from their names (your own system's headers are fine; every guess can be changed). A **Pass / Warn / Fail check** then says what was read and every row it leaves out, and why, before anything is built. The records stay in that browser session and are never stored. |
 
 ## Results on Lumino's Kanpur project (default settings: 2 weeks of contractor cover, BOQ cap on)
 Kanpur, Mar 2023 to Oct 2026, 16 items, 6 godowns. The data has no BOQ, so what the project really bought stands in for it (labelled on screen as a stand-in).
@@ -63,13 +64,14 @@ The sample project tells the same story in its own numbers: a forecast alone mak
 - `core/misses.py`: contractor-held stock, ratio gaps, closing-store transfers.
 - `core/actions.py`: Monday's list, from the real stock position as of a month, using the same `decide`.
 - `core/holdings.py`: contractor holdings against the cover rule; `core/bomfix.py`: the BOM fix sheet; `core/setplan.py`: children forecast from their sets (an expanding learned ratio) and the bake-off; `core/money.py`: rupees from the visitor's rates; `core/pack.py`: the weekly action pack.
+- `core/upload.py`: the upload path. The template; reading a file safely (size, row and unpacked-size limits, Excel opened read-only, the header line found even under a report title); recognising each table and column from its name; the check; and the build, through the same `core/ingest.py` as the command line. Lumino's own export reads into exactly the same monthly tables either way (tested).
 - `core/sets.py`, `core/requisition.py`, `core/explain.py`, `core/export.py`: set ratios, the BOQ buy list, reasons per godown, Excel exports.
 - `core/synth.py`: a made-up sample project, calibrated to a real project's measured dynamics before the planner was ever run on it. It is the demo when no real data is loaded and what CI tests run on.
 - `app.py` and `ui/`: the Streamlit screens. No logic in them.
 - `tests/`: 147 tests on scenarios with known answers, on the sample project, on a small project shaped nothing like the original, every screen headless, and, when the data is present, on the real numbers.
 
 ## Data
-Real project data is **never in this repository**. `tools/make_bundle.py` sums the raw files to month × item × godown and packs them into one text blob, which the app reads from a host secret (`YARDSTICK_BUNDLE`), the environment, or a git-ignored local file. Without one, the app runs on its built-in sample project. The Kanpur data belongs to Lumino Industries Limited.
+Real project data is **never in this repository**. `tools/make_bundle.py` sums the raw files to month × item × godown and packs them into one text blob, which the app reads from a host secret (`YARDSTICK_BUNDLE`), the environment, or a git-ignored local file. Without one, the app runs on its built-in sample project. A visitor can also upload a project of their own on the **Your data** screen; it is held only in their browser session. The Kanpur data belongs to Lumino Industries Limited.
 
 ## Run it
 ```

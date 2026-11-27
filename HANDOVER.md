@@ -1,7 +1,8 @@
 # HANDOVER
 
-Last update: Fri 27 Nov 2026, IST. Phase 3 of the v2 rebuild (actions: the weekly pack, BOM fix sheet, contractor
-holdings, money layer, set-driven children) is done, reviewed by Opus and released as **v1.3** (on `main`).
+Last update: Fri 27 Nov 2026, IST. Phase 4 of the v2 rebuild (the Your data screen: a visitor runs Yardstick on their
+own project's records) is done and released as **v1.4** (on `main`). Phase 3 (the actions) was reviewed by Opus and
+released as v1.3.
 
 The day-one hackathon build is preserved at tag `vch3-submission` (commit e1da49c) and in the frozen repo
 `ishanthakur526-droid/vch3-yardstick`. **Never push to that repo.** This repo (`ishanthakur526-droid/yardstick`)
@@ -11,7 +12,9 @@ carries its history and is where all work continues.
 - **Branches:** work on `dev`, push often (CI runs ruff + pytest on Python 3.12 on every push). Fast-forward `main`
   only at the end of a green phase and tag it (`v1.1`, `v1.2`, ...). The Streamlit app deploys from `main`.
 - **Live app:** not yet deployed from this repo (the owner deploys it; see "Deploy" below).
-- **Tests:** 147, all green locally (real-project tests included); the real-project tests skip in CI.
+- **Tests:** 190, all green locally (real-project tests included); the real-project tests skip in CI.
+- **What v1.4 adds:** the **Your data** screen (see "Phase 4, as built" below): template, upload, table and column
+  matching, a Pass / Warn / Fail check, and the project built into the visitor's session.
 - **What v1.3 adds:** the actions (see "Phase 3, as built" below): the weekly action pack on Home, the BOM fix
   sheet and the set-driven bake-off on Match the sets, contractor holdings against the rule, rupees from the
   visitor's own rates.
@@ -125,20 +128,66 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
   godowns as the replay; the pooled per-godown `shortage` column is documented as the site's shortage spread
   over the godowns.
 
+## Phase 4, as built (v1.4)
+- **`core/upload.py`** is the upload path, separate from `core/ingest.py` (which it reuses for the sums):
+  - `TABLES` is the format: per table, its columns (needed or not, text / number / date, what each holds, an example)
+    and other names a column or a file often has in an ERP export. `guide()` and `template_bytes(filled=None)` come from
+    it (a "How to fill" sheet, then a sheet per table with the needed headers highlighted; `filled` gives the sample
+    project in the same format).
+  - `read_upload(name, bytes)` returns `Sheet`s of text and never raises (a file it cannot read comes back with
+    `problem` set, in plain words). Limits: `MAX_FILE_MB` 50 (also `server.maxUploadSize` in `.streamlit/config.toml`),
+    `MAX_ROWS` 500,000 per file or sheet, `MAX_TOTAL_ROWS` 1,000,000, `MAX_UNPACKED_MB` 400 (zip sizes checked before
+    Excel is opened), `MAX_SHEETS` 20. Excel goes through pandas, which opens it read-only; openpyxl parses with
+    defusedxml (installed). CSV: encoding (UTF-8, else cp1252) and delimiter (`,` `;` tab `|`) worked out. The header
+    line is found within the first 20 lines (exports often put a title above it). The template's own "How to fill"
+    sheet is skipped when the workbook comes back.
+  - `guess_table` (the file or sheet name decides when it names a table, else the table whose needed columns are all
+    found), `suggest_mapping` (exact name, then an exact alternative, then close spelling at 0.8 or more; each column
+    used once), `apply_mapping` (renames; thousands separators dropped from numbers). Movement types and transfer
+    directions are read from common words ("Issued", "Consumed", "Receipt from another store"), and the check says so.
+  - `check(parts)` returns a `Report`: Pass / Warn / Fail lines and the mapped tables. **Fail** stops the build: a
+    needed table or column missing, no usable lead time for an item (the planner needs it; nothing is assumed), no
+    CONSUMPTION rows, no usable receipts, fewer than 7 months (3 to learn, 4 to score). **Warn** says every row left out
+    and why (unreadable date or quantity, unknown item, no godown), negative quantities (counted as entered), repeated
+    item codes, files added together, fewer than 13 months, unknown meta keys. `build(tables, project)` goes through
+    `ingest.monthly_tables` and `dataset.from_tables(key="custom")`.
+  - `ingest.parse_dates` also reads Excel day numbers (45292 = 1 Jan 2024) when a sheet stored dates as numbers.
+- **`ui/data.py`** ("Your data", the last section): template and sample downloads; the uploader; per file a table
+  picker and a "Match the columns" panel (open when a needed column was not found); the check as a wrapped list (it
+  reads on a phone); a project name; "Use this data" (a callback: builds the project into
+  `st.session_state["custom_ds"]`, selects it in the sidebar, opens Home). "Remove my data" undoes it. Parsed files
+  and the report are kept in `st.session_state` (`data_sheets`, `data_report`) for that session only. Widget keys start
+  `data_` and are not in `WIDGET_PREFIXES`, so they survive a project switch.
+- **Tested:** the sample round-trips through its own workbook to an identical ledger; an export with its own headers,
+  title lines, day-first dates and `;` reads to the same ledger as the original; **Lumino's real raw export reads to
+  exactly the same monthly tables through the upload as through the command line** (local only; reads the raw CSVs from
+  `YARDSTICK_RAW_CSV` or `../data-lumino/...`); every Fail and Warn; every limit; files that are not what they say.
+  Checked by eye in the built-in browser with real uploads (three CSVs with ERP headers, and the sample workbook) at
+  desktop and phone size, through to Home on the uploaded project.
+
 ## Next: the v2 phases
-- **Phase 4: data screen.** Upload the 5-CSV pack or one xlsx; a downloadable blank template; a Pass/Warn/Fail
-  validator; a fuzzy column mapper (difflib plus synonyms). The uploaded dataset goes in
-  `st.session_state["custom_ds"]`, which `ui/state.choose()` already offers in the sidebar. Release v1.4.
-- **Phase 5: hardening.**
-  - Upload size and row caps, an xlsx zip-size check, read-only openpyxl, defusedxml (already pinned).
-  - The BOQ upload in `ui/buylist.py` goes through the same safe reader.
-  - Profile and keep each screen under 2 s warm; then the Opus security review (ingest, export, caches, markdown).
+- **Phase 5: hardening.** Already in place from Phase 4: upload size, row and unpacked-size limits, Excel read-only,
+  defusedxml. Still to do:
+  - The BOQ upload in `ui/buylist.py` goes through `upload.read_upload` (it still calls `pd.read_csv` /
+    `pd.read_excel` directly).
+  - A size cap on the bundle's decompression and a clear message for a corrupt bundle; replace the broad excepts that
+    are not guarding visitor input (`bundle.py`).
+  - Memory on the free host: a 231,000-row upload is held as text (sheets, then the mapped tables) until the visitor
+    leaves; consider dropping `data_sheets` after "Use this data", or storing the text more compactly.
+  - Profile and keep each screen under 2 s warm (the real project: reading its 20 MB CSV takes ~3 s, the check ~2 s,
+    the build ~1.5 s, each once per upload).
+  - Then the Opus security review (ingest and upload, export, caches, markdown), and release v2.0-rc.
 - **Phase 6: the private follow-up package** for Rohit, in `F:\ClacuttaAIClub_Hackathon\followup\`, never in this repo.
 
 ## Known quirks
 - Streamlit `AppTest` cannot drive file uploads. Inject a dataset with `at.session_state["custom_ds"] = ds`, then
   pick it with `at.radio(key="dataset").set_value("custom").run()`. Setting the radio's value directly fails when its
-  options change between runs.
+  options change between runs. To test the Your data screen, put files already read in place:
+  `at.session_state["data_sheets"] = {"sig": (), "sheets": upload.read_upload(name, data)}` (see `uploaded()` in
+  `tests/test_app.py`).
+- A real upload in the built-in browser: serve the files from a small local server that sends
+  `Access-Control-Allow-Origin: http://localhost:8501`, then in the page `fetch` each one into a `File`, put them on
+  `document.querySelector('input[type="file"]').files` through a `DataTransfer`, and dispatch a `change` event.
 - On this Windows machine, a bash heredoc whose text contains `'''` breaks the shell. Write such scripts to a file
   first.
 - The pytest config adds `-q`, so `pytest -q` prints no summary line; count the dots or use `-rA`.
