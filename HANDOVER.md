@@ -145,6 +145,10 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
 - The local preview server does not always pick up edits to `ui/` or `core/` modules: stop and start it again before
   checking a change by eye.
 - AppTest: widget keys carry the project's fingerprint, so read them by prefix (see `widget()` in `tests/test_app.py`).
+- AppTest can drive a `st.data_editor`: set its key to `{"edited_rows": {row: {column: value}}, "added_rows": [],
+  "deleted_rows": []}` and run (see `test_rupees_appear_only_after_a_rate_is_typed`). AppTest does not click download
+  buttons, so test what they build directly (`tests/test_pack.py`).
+- In the built-in browser, a data-editor cell edits like this: click the cell, press Return, type, press Return.
 
 ## Deploy (owner's clicks, Streamlit Community Cloud, free)
 1. share.streamlit.io → Create app → Deploy a public app from GitHub.
