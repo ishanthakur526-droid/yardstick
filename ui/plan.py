@@ -194,15 +194,10 @@ def render(ds: Dataset) -> None:
         file_name=f"yardstick_{file_part(code)}_{month}_plan.csv",
         mime="text/csv",
     )
+    everything = run_all(fp, ds, takeover, window, safety, capped, cover)  # cached: the same call as the table below
     d2.download_button(
         "Download the plan (Excel)",
-        export.workbook(
-            r,
-            month,
-            short_item(names[code], 80),
-            run_all(fp, ds, takeover, window, safety, capped, cover),
-            source=cfg.source,
-        ),
+        lambda: export.workbook(r, month, short_item(names[code], 80), everything, source=cfg.source),  # on click
         file_name=f"yardstick_{file_part(code)}_{month}.xlsx",
         mime=XLSX,
     )
