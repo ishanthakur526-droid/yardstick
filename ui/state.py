@@ -152,7 +152,7 @@ def run_week(
 ) -> pd.DataFrame:
     settings = Settings(takeover=takeover, cover_weeks=cover_weeks, capped=boq_cap)
     boq = {c: _ds.boq_qty(c) for c in _ds.ledger.items["item_code"]}
-    return monday_list.week(_ds.ledger, month, settings, boq)
+    return monday_list.week(_ds.ledger, month, settings, boq, _ds.sets)
 
 
 @st.cache_data(show_spinner=False, max_entries=32, ttl=TTL)

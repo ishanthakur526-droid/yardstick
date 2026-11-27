@@ -25,6 +25,7 @@ from .fmt import indian, month_label
 from .holdings import allowed, weeks_of_use
 from .ledger import Ledger, item_site
 from .planner import Settings, allocation_shares, cap_for, decide, forecast, lead_months
+from .setplan import adopt_at, driver, set_forecast, use_series
 
 COLUMNS = ["item_code", "item", "unit", "kind", "qty", "detail", "why", "from_godown", "to_godown", "lands"]
 KIND_ORDER = {"Move": 0, "Order": 1, "Hold issues": 2}
@@ -86,8 +87,25 @@ def position(ledger: Ledger, code: str, i: int, settings: Settings) -> Position:
     )
 
 
+def from_sets(ledger: Ledger, sets: pd.DataFrame | None, code: str, i: int, settings: Settings) -> float | None:
+    """A child's forecast from its parents, when the bake-off up to this month says it is no worse than its own."""
+    if (
+        sets is None
+        or sets.empty
+        or code not in set(sets["child_code"])
+        or not adopt_at(ledger, sets, code, i, settings)
+    ):
+        return None
+    return set_forecast(use_series(ledger, code), driver(ledger, sets, code), i, settings)
+
+
 def item_actions(
-    ledger: Ledger, code: str, month: str, settings: Settings = Settings(), boq: float | None = None
+    ledger: Ledger,
+    code: str,
+    month: str,
+    settings: Settings = Settings(),
+    boq: float | None = None,
+    sets: pd.DataFrame | None = None,
 ) -> list[dict]:
     months = ledger.months
     i = months.index(month)
@@ -103,7 +121,10 @@ def item_actions(
     extra = (p.held - p.keep) if not np.isnan(p.keep) else 0.0
     share = p.past_by_godown[-settings.window :].sum(axis=0) if len(p.past_by_godown) else np.ones(len(p.have))
     share = share / share.sum() if share.sum() > 0 else np.full(len(p.have), 1 / len(p.have))
-    d = decide(p.past_total, p.past_by_godown, p.have, p.coming + extra * share, room, p.lead, step, settings)
+    f_sets = from_sets(ledger, sets, code, i, settings)
+    d = decide(
+        p.past_total, p.past_by_godown, p.have, p.coming + extra * share, room, p.lead, step, settings, f_total=f_sets
+    )
 
     labels = ledger.labels
     lab = [labels.get(g, str(g).title()) for g in ledger.working]
@@ -129,6 +150,11 @@ def item_actions(
         lands = month_label(lands_month) if lands_month else "after the last recorded month"
         split = ", ".join(f"{lab[g]} {indian(x)}" for g, x in enumerate(d.order) if x > 0)
         held_note = f" Contractors hold {q(max(extra, 0.0))} beyond their cover, counted first." if extra > 0 else ""
+        if f_sets is not None:
+            held_note += (
+                " Demand is forecast from its sets (its parents' forecast times the ratio the site has shown so far), "
+                "which has done no worse than its own history up to now."
+            )
         out.append(
             {
                 **base,
@@ -168,13 +194,18 @@ def item_actions(
 
 
 def week(
-    ledger: Ledger, month: str, settings: Settings = Settings(), boq: dict[str, float | None] | None = None
+    ledger: Ledger,
+    month: str,
+    settings: Settings = Settings(),
+    boq: dict[str, float | None] | None = None,
+    sets: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Every item's actions for the Monday of `month`, moves first (vouchers before purchase orders)."""
+    """Every item's actions for the Monday of `month`, moves first (vouchers before purchase orders). With `sets`, a
+    child whose sets forecast it no worse than its own history so far is planned from its sets."""
     boq = boq or {}
     rows: list[dict] = []
     for code in ledger.items["item_code"]:
-        rows.extend(item_actions(ledger, code, month, settings, boq.get(code)))
+        rows.extend(item_actions(ledger, code, month, settings, boq.get(code), sets))
     df = pd.DataFrame(rows, columns=COLUMNS)
     if df.empty:
         return df

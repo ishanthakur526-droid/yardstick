@@ -144,15 +144,17 @@ def decide(
     lead: int,
     step: float,
     settings: Settings,
+    f_total: float | None = None,
 ) -> Decision:
     """Order, move or hold, from what is known at the start of the month.
 
     `past_total` and `past_by_godown` are the demand on the godowns in the months BEFORE this one (the caller passes
     only those, so the future cannot leak in). `have` is stock on hand now, `coming` what lands before a new order could,
-    `room` how much more may still be bought in total."""
+    `room` how much more may still be bought in total. `f_total` replaces the forecast of this month's demand when the
+    caller has a better one made from the same past (a child planned from its sets: see core/setplan.py)."""
     g_len = len(have)
     have = have.astype(float).copy()
-    f = forecast(past_total, settings)
+    f = forecast(past_total, settings) if f_total is None else float(f_total)
     sd = float(past_total[-settings.sd_window :].std()) if len(past_total) else 0.0
     share = (
         _shares(past_by_godown[-settings.window :].sum(axis=0)) if len(past_by_godown) else np.full(g_len, 1 / g_len)
