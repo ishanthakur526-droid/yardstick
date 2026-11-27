@@ -52,6 +52,19 @@ def minimal_raw(months: int = 12) -> dict[str, pd.DataFrame]:
     return {"items": items, "receipts": pd.DataFrame(rec), "contractor_moves": pd.DataFrame(moves)}
 
 
+def shaken_future(raw: dict[str, pd.DataFrame], month: str, ordered_until: str) -> Dataset:
+    """The same project with everything from `month` on changed (use, issues, returns, transfers) and every delivery
+    from `ordered_until` on (not yet ordered at `month`) changed too. Anything decided as of `month` must not move."""
+    tables = ingest.monthly_tables(raw)
+    used = tables["used"]
+    used.loc[used["month"] >= month, "used"] *= 5
+    flows = tables["flows"]
+    for col in ("issue", "ret", "tr_in", "tr_out"):
+        flows.loc[flows["month"] >= month, col] *= 3
+    flows.loc[flows["month"] >= ordered_until, "received"] *= 4
+    return from_tables(tables, key="custom")
+
+
 @pytest.fixture(scope="session")
 def sample_raw() -> dict[str, pd.DataFrame]:
     return synth.make_pack()

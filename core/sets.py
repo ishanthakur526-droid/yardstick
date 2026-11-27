@@ -77,18 +77,23 @@ def pairing(correlation: float) -> str:
     return "strong" if correlation >= 0.8 else ("loose" if correlation >= 0.4 else "weak")
 
 
-def calibrate(ledger: Ledger, sets: pd.DataFrame) -> pd.DataFrame:
-    """Stated against observed ratio for every parent-child pair, and how tightly the child follows its parent."""
+def calibrate(ledger: Ledger, sets: pd.DataFrame, before: str | None = None) -> pd.DataFrame:
+    """Stated against observed ratio for every parent-child pair, and how tightly the child follows its parent.
+
+    `before`: use only the months before this one ('YYYY-MM'), as the records stood then (the weekly pack is built
+    "as of" a month and must not read later months)."""
     if sets is None or sets.empty:
         return pd.DataFrame(columns=CALIBRATION_COLUMNS)
-    used = ledger.site.groupby("item_code")["used"].sum()
-    monthly = ledger.site.pivot(index="month", columns="item_code", values="used").fillna(0.0)
+    site = ledger.site if before is None else ledger.site[ledger.site["month"] < before]
+    codes = ledger.items["item_code"]
+    used = site.groupby("item_code")["used"].sum().reindex(codes).fillna(0.0)
+    monthly = site.pivot(index="month", columns="item_code", values="used").reindex(columns=codes).fillna(0.0)
     rows = []
     for child, grp in sets.groupby("child_code", sort=False):
         expected = sum(r.ratio_of_parent * used[r.parent_code] for r in grp.itertuples())
         factor = float(used[child] / expected) if expected > 0 else float("nan")
         for r in grp.itertuples():
-            ok = monthly[child].std() > 0 and monthly[r.parent_code].std() > 0
+            ok = len(monthly) > 1 and monthly[child].std() > 0 and monthly[r.parent_code].std() > 0
             corr = float(monthly[r.parent_code].corr(monthly[child])) if ok else float("nan")
             rows.append(
                 {
@@ -101,7 +106,7 @@ def calibrate(ledger: Ledger, sets: pd.DataFrame) -> pd.DataFrame:
                     "stated": float(r.ratio_of_parent),
                     "observed": float(r.ratio_of_parent) * factor,
                     "factor": factor,
-                    "agrees": bool(AGREES_BETWEEN[0] <= factor <= AGREES_BETWEEN[1]),
+                    "agrees": bool(AGREES_BETWEEN[0] <= factor <= AGREES_BETWEEN[1]),  # nan (no use yet): False
                     "shared": bool(len(grp) > 1),
                     "monthly_correlation": corr,
                     "pairing": pairing(corr),

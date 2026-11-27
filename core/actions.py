@@ -22,10 +22,11 @@ import numpy as np
 import pandas as pd
 
 from .fmt import indian, month_label
+from .holdings import allowed, weeks_of_use
 from .ledger import Ledger, item_site
-from .planner import WEEKS_PER_MONTH, Settings, allocation_shares, cap_for, decide, forecast, lead_months
+from .planner import Settings, allocation_shares, cap_for, decide, forecast, lead_months
 
-COLUMNS = ["item_code", "item", "unit", "kind", "qty", "detail", "why"]
+COLUMNS = ["item_code", "item", "unit", "kind", "qty", "detail", "why", "from_godown", "to_godown", "lands"]
 KIND_ORDER = {"Move": 0, "Order": 1, "Hold issues": 2}
 
 
@@ -72,7 +73,7 @@ def position(ledger: Ledger, code: str, i: int, settings: Settings) -> Position:
         keep = float("nan")
     else:
         past = used[:, None] * allocation_shares(net[:i]) if i > 0 else np.zeros((0, len(working)))
-        keep = settings.cover_weeks / WEEKS_PER_MONTH * forecast(used, settings)
+        keep = allowed(used, settings)
     return Position(
         have=before + received[i],
         coming=received[i + 1 : i + lead].sum(axis=0),
@@ -118,10 +119,14 @@ def item_actions(
                 "detail": f"{lab[a]} → {lab[b]}",
                 "why": f"{lab[b]} has {q(p.have[b])} and needs about {q(d.forecast[b] + d.safety[b])} this month; "
                 f"{lab[a]} holds more than its own lead-time need.",
+                "from_godown": lab[a],
+                "to_godown": lab[b],
+                "lands": "",
             }
         )
     if d.order is not None and d.order.sum() > 0:
-        lands = month_label(months[i + p.lead]) if i + p.lead < len(months) else "after the last recorded month"
+        lands_month = months[i + p.lead] if i + p.lead < len(months) else ""
+        lands = month_label(lands_month) if lands_month else "after the last recorded month"
         split = ", ".join(f"{lab[g]} {indian(x)}" for g, x in enumerate(d.order) if x > 0)
         held_note = f" Contractors hold {q(max(extra, 0.0))} beyond their cover, counted first." if extra > 0 else ""
         out.append(
@@ -137,11 +142,14 @@ def item_actions(
                     if np.isfinite(cap)
                     else ""
                 ),
+                "from_godown": "",
+                "to_godown": split,
+                "lands": lands_month,
             }
         )
     if extra > step and settings.cover_weeks is not None:
         rate = forecast(p.past_total, settings)
-        weeks_held = p.held / rate * WEEKS_PER_MONTH if rate > 0 else float("nan")
+        weeks_held = weeks_of_use(p.held, rate)
         out.append(
             {
                 **base,
@@ -151,6 +159,9 @@ def item_actions(
                 + (f", about {weeks_held:.0f} weeks of use" if rate > 0 else ""),
                 "why": f"The issue rule allows {settings.cover_weeks:g} weeks of forecast use ({q(p.keep)}). Issue only "
                 f"what the site uses beyond that until contractors' stock comes down.",
+                "from_godown": "",
+                "to_godown": "",
+                "lands": "",
             }
         )
     return out
