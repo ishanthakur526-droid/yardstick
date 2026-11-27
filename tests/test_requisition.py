@@ -15,9 +15,10 @@ import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core import requisition as requisition_module  # noqa: E402
 from core.export import requisition_workbook  # noqa: E402
 from core.ledger import build_ledger  # noqa: E402
-from core.requisition import parse_boq, ratio_check, requisition, summary  # noqa: E402
+from core.requisition import parse_boq, ratio_check, read_boq, requisition, summary  # noqa: E402
 
 MONTHS = [str(p) for p in pd.period_range("2025-01", periods=6, freq="M")]
 ITEMS = pd.DataFrame(
@@ -176,3 +177,48 @@ def test_a_boq_sheet_is_read_by_name_or_by_code():
     assert parse_boq(pd.DataFrame({"Item code": ["x"], "Qty": [4]}), ITEMS)[0] == {"X": 4.0}
     with pytest.raises(ValueError):
         parse_boq(pd.DataFrame({"foo": [1]}), ITEMS)
+
+
+def _xlsx(sheets: dict[str, pd.DataFrame]) -> bytes:
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as xl:
+        for name, df in sheets.items():
+            df.to_excel(xl, sheet_name=name, index=False)
+    return buf.getvalue()
+
+
+def test_an_uploaded_boq_goes_through_the_safe_reader():
+    """A title line, `;`, Indian thousands separators: read as the Your data screen reads a file."""
+    text = "BOQ for feeder 4\nItem code;Description;Qty\nPOLE;;1,20,000\nX;;4\nZZZ;;2\n"
+    got, missed, problem = read_boq("boq.csv", text.encode(), ITEMS)
+    assert problem == "" and got == {"POLE": 120000.0, "X": 4.0} and missed == ["ZZZ"]
+
+
+def test_an_uploaded_boq_workbook_uses_the_first_sheet_that_holds_one():
+    book = _xlsx(
+        {
+            "Notes": pd.DataFrame({"Remark": ["prepared by stores"]}),
+            "BOQ": pd.DataFrame({"Item": ["CHILD HOOK"], "Quantity": [25]}),
+        }
+    )
+    assert read_boq("boq.xlsx", book, ITEMS) == ({"C": 25.0}, [], "")
+
+
+@pytest.mark.parametrize(
+    "name, data, why",
+    [
+        ("boq.xlsx", b"not a zip at all", "not a valid .xlsx"),
+        ("boq.pdf", b"%PDF-1.4", "only .xlsx and .csv"),
+        ("boq.csv", b"foo,bar\n1,2\n", "item column"),
+        ("boq.csv", b"", "empty"),
+    ],
+)
+def test_an_uploaded_file_that_is_not_a_boq_says_why(name, data, why):
+    got, missed, problem = read_boq(name, data, ITEMS)
+    assert got == {} and missed == [] and why in problem
+
+
+def test_a_file_far_longer_than_a_boq_is_refused(monkeypatch):
+    monkeypatch.setattr(requisition_module, "MAX_BOQ_LINES", 3)
+    text = "Item code,Qty\n" + "POLE,1\n" * 4
+    assert "more than 3 lines" in read_boq("boq.csv", text.encode(), ITEMS)[2]

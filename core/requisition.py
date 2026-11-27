@@ -254,7 +254,8 @@ def parse_boq(table: pd.DataFrame, items: pd.DataFrame) -> tuple[dict[str, float
     got: dict[str, float] = {}
     missed: list[str] = []
     for _, row in table.iterrows():
-        qty = pd.to_numeric(row[qty_col], errors="coerce")
+        raw = row[qty_col]
+        qty = pd.to_numeric(raw.replace(",", "").strip() if isinstance(raw, str) else raw, errors="coerce")
         if pd.isna(qty) or qty <= 0:
             continue
         key_code = str(row[code_col]).strip().casefold() if code_col is not None else ""
@@ -265,3 +266,30 @@ def parse_boq(table: pd.DataFrame, items: pd.DataFrame) -> tuple[dict[str, float
             continue
         got[code] = got.get(code, 0.0) + float(qty)
     return got, missed
+
+
+MAX_BOQ_LINES = 20_000  # a BOQ lists items, not transactions: far beyond this, it is some other file
+
+
+def read_boq(name: str, data: bytes, items: pd.DataFrame) -> tuple[dict[str, float], list[str], str]:
+    """A BOQ file from a visitor, read with the same safe reader and limits as the Your data screen.
+
+    Returns the quantities by item code, the lines that matched no item, and why the file could not be used ("" when it
+    could). The first sheet with an item column and a quantity column is used. It never raises.
+    """
+    from . import upload  # here, not at the top: upload -> export -> requisition would be a cycle
+
+    why = "it needs an item column (code or name) and a quantity column"
+    for sheet in upload.read_upload(name, data):
+        if sheet.problem:
+            why = sheet.problem
+            continue
+        if len(sheet.frame) > MAX_BOQ_LINES:
+            why = f"it has more than {MAX_BOQ_LINES:,} lines, far more than a BOQ"
+            continue
+        try:
+            got, missed = parse_boq(sheet.frame, items)
+        except ValueError:
+            continue
+        return got, missed, ""
+    return {}, [], why

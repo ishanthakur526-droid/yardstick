@@ -109,16 +109,15 @@ def render(ds: Dataset) -> None:
     boq = {anchor: float(anchors)} if anchor else {}
     boq.update({c: float(q) for c, q in zip(codes, lines_in["BOQ quantity"]) if pd.notna(q) and q > 0})
     if sheet is not None:
-        try:
-            table = pd.read_csv(sheet) if sheet.name.lower().endswith(".csv") else pd.read_excel(sheet)
-            from_sheet, unmatched = reqs.parse_boq(table, ledger.items)
+        from_sheet, unmatched, problem = _read_boq(sheet, ledger)
+        if problem:
+            st.error(f"Could not use {md(sheet.name)}: {md(problem)}.")
+        else:
             boq.update(from_sheet)
             st.caption(
                 f"Read {len(from_sheet)} lines from {md(sheet.name)}; they replace the lines above."
                 + (f" Not recognised: {md(', '.join(unmatched[:5]))}." if unmatched else "")
             )
-        except Exception as err:  # noqa: BLE001 - a bad file must not break the page; say why and carry on
-            st.error(f"Could not read that file: {md(err)}")
 
     with st.expander("How the parts are worked out"):
         basis = st.radio(
@@ -182,6 +181,16 @@ def render(ds: Dataset) -> None:
             f"- **Not in the data:** a bill of quantities, prices, and orders still on the way. {example_note}\n"
             "- **Next:** read the BOQ straight from the ERP extract."
         )
+
+
+def _read_boq(sheet, ledger) -> tuple[dict[str, float], list[str], str]:
+    """The uploaded BOQ, read once per upload (not on every rerun) and kept for this session and project only."""
+    sig = (sheet.file_id, sheet.name, sheet.size)
+    memo = st.session_state.get(k("boq_read"))
+    if memo is None or memo[0] != sig:
+        memo = (sig, reqs.read_boq(sheet.name, sheet.getvalue(), ledger.items))
+        st.session_state[k("boq_read")] = memo
+    return memo[1]
 
 
 def _show(req, ledger, stock_label: str, days_left: int, handoff: int, source: str) -> None:
