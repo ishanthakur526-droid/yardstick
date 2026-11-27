@@ -10,7 +10,7 @@ from core import pack as weekly
 from core import sets as setcheck
 from core.dataset import Dataset
 from core.fmt import indian, month_label, short_item
-from core.safe import csv_bytes, file_part
+from core.safe import csv_bytes, file_part, md
 from ui.common import XLSX
 from ui.state import k, planner_limits, run_bakeoff, run_balance, run_calibration
 
@@ -116,7 +116,7 @@ def _judged(ds: Dataset, view, judged_children: list[str], parent: str) -> None:
         border=True,
         help=f"Godown-month accounts off by {setcheck.SERIOUS:.0%} / {setcheck.WATCH:.0%} of all sets issued so far.",
     )
-    k3.metric("Judged children", ", ".join(short_item(view.names[c], 22) for c in judged_children), border=True)
+    k3.metric("Judged children", md(", ".join(short_item(view.names[c], 22) for c in judged_children)), border=True)
 
     st.plotly_chart(charts.set_calendar(cal_m))
     st.caption(

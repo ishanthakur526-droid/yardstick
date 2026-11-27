@@ -49,16 +49,16 @@ def render(ds: Dataset) -> None:
     )
 
     k1, k2, k3, k4, k5 = tiles("tiles_see")
-    k1.metric("Arrived from vendors", f"{indian(row['received'])} {unit}", border=True)
-    k2.metric("Actually used", f"{indian(row['used'])} {unit}", border=True)
+    k1.metric("Arrived from vendors", f"{indian(row['received'])} {md(unit)}", border=True)
+    k2.metric("Actually used", f"{indian(row['used'])} {md(unit)}", border=True)
     last = site.iloc[-1]
     k3.metric(
         "Idle at project end",
-        f"{indian(last['idle_total'])} {unit}",
+        f"{indian(last['idle_total'])} {md(unit)}",
         border=True,
         help=f"{indian(last['godown_stock'])} in godowns + {indian(last['with_contractors'])} with contractors",
     )
-    k4.metric("Peak idle", f"{indian(peak)} {unit}", border=True, help=month_label(peak_month))
+    k4.metric("Peak idle", f"{indian(peak)} {md(unit)}", border=True, help=month_label(peak_month))
     k5.metric("Lead time", f"{int(row['lead_time_days'])} days", border=True)
 
     st.plotly_chart(charts.stock_story(site, unit))

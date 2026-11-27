@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 
 import pandas as pd
@@ -14,6 +15,12 @@ _NUMBERISH = re.compile(r"^[+-]?[\d.,]+%?$")  # "+12%" or "-3.5" is a number to 
 def md(text: object) -> str:
     """Show a name as plain text inside markdown: no links, images, HTML, maths or formatting can come from data."""
     return _MD.sub(r"\\\1", str(text))
+
+
+def chart_text(text: object) -> str:
+    """A name shown in a Plotly chart: Plotly reads <a href>, <b> and the like in its text as markup, and shows
+    `&lt;` as a plain `<`, so escaping keeps a name from a file as the text it is."""
+    return html.escape(str(text), quote=False)
 
 
 def _cell(v: object) -> object:

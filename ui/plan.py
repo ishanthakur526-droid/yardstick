@@ -113,7 +113,7 @@ def render(ds: Dataset) -> None:
     m1, m2, m3, m4, m5 = tiles("tiles_plan")
     m1.metric(
         "Average idle stock",
-        f"{indian(s['avg_plan'])} {unit}",
+        f"{indian(s['avg_plan'])} {md(unit)}",
         delta=f"{-s['reduction']:+.0%} vs {indian(s['avg_real'])} really",
         delta_color="inverse",
         border=True,
@@ -121,7 +121,7 @@ def render(ds: Dataset) -> None:
     peak_change = (s["peak_plan"] / s["peak_real"] - 1) if s["peak_real"] > 0 else 0.0
     m2.metric(
         "Peak idle stock",
-        f"{indian(s['peak_plan'])} {unit}",
+        f"{indian(s['peak_plan'])} {md(unit)}",
         delta=f"{peak_change:+.0%} vs {indian(s['peak_real'])} really",
         delta_color="inverse",
         border=True,
@@ -135,12 +135,16 @@ def render(ds: Dataset) -> None:
         help=f"Limit for the saving to count: {MAX_SHORTAGE_SHARE:.0%} of use.",
     )
     m4.metric(
-        "Orders placed", f"{s['orders_n']}", delta=f"{indian(s['orders_qty'])} {unit}", delta_color="off", border=True
+        "Orders placed",
+        f"{s['orders_n']}",
+        delta=f"{indian(s['orders_qty'])} {md(unit)}",
+        delta_color="off",
+        border=True,
     )
     m5.metric(
         "Moves between godowns",
         f"{s['moves_n']}",
-        delta=f"{indian(s['moves_qty'])} {unit}",
+        delta=f"{indian(s['moves_qty'])} {md(unit)}",
         delta_color="off",
         border=True,
         help=f"Stock moved instead of newly ordered. {s['moves_planned_n']} planned at the start of a month "
