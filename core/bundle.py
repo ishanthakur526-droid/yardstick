@@ -27,6 +27,7 @@ SECRET_NAMES = ("YARDSTICK_BUNDLE", "LUMINO_BUNDLE")
 LOCAL_FILE = Path(__file__).resolve().parent.parent / "data_local" / "bundle.txt"
 MAX_BLOB_CHARS = 30_000_000  # a packed bundle is ~40 KB for a 3.5-year project; anything near this is not a bundle
 MAX_UNPACKED_BYTES = 300_000_000  # refuse to inflate past this (a zip bomb would)
+MAX_TABLES = 20  # a bundle holds items, flows, used and a few optional tables
 TEXT_COLUMNS = (  # read as text, so a code like 0100 keeps its leading zero
     "item_code",
     "item_name",
@@ -56,24 +57,39 @@ def pack(tables: dict[str, pd.DataFrame]) -> str:
 
 
 def unpack(blob: str) -> dict[str, pd.DataFrame]:
+    """The tables in a bundle. Anything that is not a whole, readable bundle raises `BundleError` with a plain reason;
+    a bundle never inflates past `MAX_UNPACKED_BYTES`."""
+    blob = blob.strip()
+    if not blob:
+        raise BundleError("the data bundle is empty")
     if len(blob) > MAX_BLOB_CHARS:
         raise BundleError("the data bundle is far larger than expected")
     try:
         inflate = zlib.decompressobj()
-        raw = inflate.decompress(base64.b64decode(blob.strip()), MAX_UNPACKED_BYTES)
-        if inflate.unconsumed_tail:
-            raise BundleError("the data bundle unpacks to more than the app will read")
+        raw = inflate.decompress(base64.b64decode(blob), MAX_UNPACKED_BYTES)
+    except (binascii.Error, zlib.error) as err:
+        raise BundleError("the data bundle is damaged (it may have been cut short when it was pasted)") from err
+    if inflate.unconsumed_tail:
+        raise BundleError("the data bundle unpacks to more than the app will read")
+    if not inflate.eof:
+        raise BundleError("the data bundle is incomplete (it may have been cut short when it was pasted)")
+    try:
         data = json.loads(raw)
-    except (binascii.Error, zlib.error, UnicodeDecodeError, json.JSONDecodeError) as err:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as err:
         raise BundleError("the data bundle is damaged") from err
     if not isinstance(data, dict) or data.get("v") != BUNDLE_VERSION or not isinstance(data.get("tables"), dict):
         raise BundleError("the data bundle has an unexpected format")
+    if len(data["tables"]) > MAX_TABLES:
+        raise BundleError("the data bundle has more tables than a project has")
     tables = {}
     for name, text in data["tables"].items():
         if not isinstance(text, str):
-            raise BundleError(f"table {name!r} in the data bundle is not text")
-        header = pd.read_csv(io.StringIO(text), nrows=0).columns
-        tables[str(name)] = pd.read_csv(io.StringIO(text), dtype={c: str for c in TEXT_COLUMNS if c in header})
+            raise BundleError(f"a table in the data bundle is not text ({str(name)[:40]!r})")
+        try:
+            header = pd.read_csv(io.StringIO(text), nrows=0).columns
+            tables[str(name)] = pd.read_csv(io.StringIO(text), dtype={c: str for c in TEXT_COLUMNS if c in header})
+        except (pd.errors.ParserError, pd.errors.EmptyDataError, ValueError) as err:
+            raise BundleError(f"a table in the data bundle cannot be read ({str(name)[:40]!r})") from err
     return tables
 
 

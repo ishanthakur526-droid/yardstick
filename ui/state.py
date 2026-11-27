@@ -6,6 +6,8 @@ project are never served for another, and nothing a user uploads ever lands in a
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 import streamlit as st
 
@@ -21,6 +23,7 @@ from core.safe import md
 BUNDLE, SAMPLE, CUSTOM = "bundle", "sample", "custom"
 WIDGET_PREFIXES = ("home_", "see_", "plan_", "boq_", "set_")  # per-project choices, cleared when the project changes
 TTL = 6 * 3600
+log = logging.getLogger("yardstick")
 
 
 @st.cache_resource(show_spinner="Reading the project's records…")
@@ -29,8 +32,12 @@ def bundled() -> tuple[Dataset | None, str]:
     try:
         tables = load_tables()
         return (from_tables(tables, key=BUNDLE), "") if tables is not None else (None, "")
-    except (BundleError, KeyError, ValueError) as err:
+    except BundleError as err:  # the bundle itself is damaged: say how, in plain words
+        log.warning("the data bundle could not be read: %s", err)
         return None, f"The project data supplied with this app could not be read ({err}). Showing the sample project."
+    except (KeyError, ValueError, TypeError):  # a whole bundle whose tables are not a project's
+        log.exception("the data bundle's tables could not be built into a project")
+        return None, "The project data supplied with this app is not in the expected shape. Showing the sample project."
 
 
 @st.cache_resource(show_spinner="Building the sample project…")

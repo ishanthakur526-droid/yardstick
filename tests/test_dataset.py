@@ -58,6 +58,57 @@ def test_a_bundle_that_inflates_too_far_is_refused(monkeypatch):
         unpack(big)
 
 
+def test_a_bundle_cut_short_when_pasted_is_refused_as_incomplete(sample_ds):
+    whole = pack(sample_ds.tables)
+    cut = whole[: len(whole) * 2 // 3]
+    cut = cut[: len(cut) - len(cut) % 4]  # still valid base64, so only the inflater can tell it is short
+    with pytest.raises(BundleError, match="incomplete"):
+        unpack(cut)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"v": 1, "tables": {"items": 'a,b\n"unclosed,1\n'}},  # CSV the reader cannot parse
+        {"v": 1, "tables": {"items": ""}},  # no columns at all
+        {"v": 1, "tables": {f"t{i}": "a\n1\n" for i in range(50)}},  # far more tables than a project has
+    ],
+)
+def test_a_bundle_whose_tables_cannot_be_read_says_so(payload):
+    blob = base64.b64encode(zlib.compress(json.dumps(payload).encode())).decode()
+    with pytest.raises(BundleError):
+        unpack(blob)
+
+
+def test_a_deeply_nested_bundle_is_refused_not_crashed():
+    blob = base64.b64encode(zlib.compress(b"[" * 200_000 + b"]" * 200_000)).decode()
+    with pytest.raises(BundleError):
+        unpack(blob)
+
+
+@pytest.mark.parametrize("blob", ["", "   \n"])
+def test_an_empty_bundle_is_refused(blob):
+    with pytest.raises(BundleError, match="empty"):
+        unpack(blob)
+
+
+def test_a_damaged_bundle_falls_back_to_the_sample(monkeypatch):
+    """The kill switch must hold even for a bundle pasted wrong: the app shows the sample and says why."""
+    from ui import state
+
+    monkeypatch.setattr(state, "load_tables", lambda: unpack("not base64 at all!!"))
+    state.bundled.clear()
+    try:
+        ds, problem = state.bundled()
+        assert ds is None and "could not be read" in problem and "sample project" in problem
+        monkeypatch.setattr(state, "load_tables", lambda: {"items": pd.DataFrame({"x": [1]})})
+        state.bundled.clear()
+        ds, problem = state.bundled()
+        assert ds is None and "not in the expected shape" in problem
+    finally:
+        state.bundled.clear()
+
+
 def test_data_with_no_movements_is_refused():
     raw = minimal_raw()
     t = ingest.monthly_tables(raw)
