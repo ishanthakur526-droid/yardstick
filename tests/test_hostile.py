@@ -46,6 +46,7 @@ def hostile_raw() -> dict[str, pd.DataFrame]:
         meta.loc[meta["key"] == key, "value"] = meta.loc[meta["key"] == key, "value"] + " " + BAD
     meta.loc[meta["key"] == "anchor_code", "value"] += "[c](https://evil.example)"
     meta.loc[meta["key"] == "closing_stores", "value"] += " " + BAD
+    meta.loc[meta["key"] == "anchor_noun", "value"] += " " + BAD  # the Requisition screen labels a box with it
     return raw
 
 

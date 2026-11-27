@@ -1,6 +1,9 @@
 [theme]
 primaryColor = "#7c3aed"
 
+[client]
+showErrorDetails = "none"  # never show a visitor a traceback or an exception's text
+
 [browser]
 gatherUsageStats = false
 

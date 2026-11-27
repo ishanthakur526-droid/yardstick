@@ -74,7 +74,20 @@ def _text(s: pd.Series) -> pd.Series:
     return s.where(s.isna(), s.astype(str).str.strip())
 
 
+EARLIEST, LATEST = pd.Timestamp("1990-01-01"), pd.Timestamp("2100-12-31")  # a date outside is a typo, not a project
+
+
 def parse_dates(s: pd.Series) -> pd.Series:
+    """Dates as timestamps; NaT where a value is not a date, or is outside 1990 to 2100 (a mistyped year such as 0202
+    or 9024 would otherwise stretch the project over centuries of empty months)."""
+    d = _read_dates(s)
+    if not pd.api.types.is_datetime64_any_dtype(d):
+        return d
+    naive = d.dt.tz_localize(None) if d.dt.tz is not None else d
+    return d.where(naive.between(EARLIEST, LATEST))
+
+
+def _read_dates(s: pd.Series) -> pd.Series:
     """ISO dates first (2024-01-31); if most do not read that way, day-first dates as Indian ERPs write them (31-01-2024),
     or Excel's day numbers (45322) when a spreadsheet stored the dates as plain numbers."""
     iso = pd.to_datetime(s, errors="coerce", format="ISO8601")

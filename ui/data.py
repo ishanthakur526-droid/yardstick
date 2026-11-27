@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 
+import pandas as pd
 import streamlit as st
 
 from core import synth, upload
@@ -50,7 +51,8 @@ def render(ds: Dataset) -> None:
         type=["xlsx", "csv"],
         accept_multiple_files=True,
         key="data_upload",
-        help=f"Up to {upload.MAX_FILE_MB} MB a file. For a big export, CSV is much quicker to read than Excel.",
+        help=f"Up to {upload.MAX_FILE_MB} MB a file and {upload.MAX_FILES} files; the first {upload.MAX_COLUMNS} "
+        "columns of each are read. For a big export, CSV is much quicker to read than Excel.",
     )
     sheets = _read(files)
     if not sheets:
@@ -75,8 +77,8 @@ def _loaded() -> None:
 
 
 def _remove() -> None:
-    st.session_state.pop("custom_ds", None)
-    st.session_state.pop("data_report", None)
+    for key in ("custom_ds", "data_report", state.SESSION_RESULTS):
+        st.session_state.pop(key, None)
     if st.session_state.get("dataset") == state.CUSTOM:
         st.session_state.pop("dataset", None)  # the sidebar falls back to the first project
 
@@ -114,12 +116,17 @@ def _read(files) -> list[upload.Sheet]:
     memo = st.session_state.get("data_sheets")
     if memo is None or memo["sig"] != sig:
         sheets: list[upload.Sheet] = []
-        for f in files or []:
-            with st.spinner(f"Reading {md(f.name)}…"):
-                sheets += upload.read_upload(f.name, f.getvalue())
+        for n, f in enumerate(files or []):
+            if n >= upload.MAX_FILES:
+                why = f"only the first {upload.MAX_FILES} files of an upload are read"
+                sheets.append(upload.Sheet(f.name, f.name, pd.DataFrame(), problem=why))
+                continue
+            with st.spinner(f"Reading {md(f.name)}…"):  # the cell budget is shared by all the files of one upload
+                sheets += upload.read_upload(f.name, f.getvalue(), upload.MAX_CELLS - upload.cells(sheets))
         memo = {"sig": sig, "sheets": sheets}
         st.session_state["data_sheets"] = memo
         st.session_state.pop("data_report", None)
+        st.session_state.pop("data_guess", None)
     return memo["sheets"]
 
 
@@ -143,7 +150,11 @@ def _recognise(sheets: list[upload.Sheet]) -> list[upload.Part]:
             st.error(f"{md(sheet.source)} cannot be used: {sheet.problem}.")
             continue
         headers = list(sheet.frame.columns)
-        guess = upload.guess_table(sheet.name, headers) or NOT_USED
+        guesses = st.session_state.setdefault("data_guess", {})  # worked out once per upload, not on every click
+        gid = _id(i, sheet)
+        if gid not in guesses:
+            guesses[gid] = upload.guess_table(sheet.name, headers) or NOT_USED
+        guess = guesses[gid]
         table = st.selectbox(
             f"{md(sheet.source)} · {len(sheet.frame):,} rows",
             options,
@@ -156,7 +167,9 @@ def _recognise(sheets: list[upload.Sheet]) -> list[upload.Part]:
         if table == NOT_USED:
             continue
         t = upload.BY_NAME[table]
-        suggested = upload.suggest_mapping(t, headers)
+        if (gid, table) not in guesses:
+            guesses[(gid, table)] = upload.suggest_mapping(t, headers)
+        suggested = guesses[(gid, table)]
         missing = [c for c in t.needed if suggested[c] is None]
         title = "Match the columns" + (
             f": {len(missing)} needed column{'s' if len(missing) > 1 else ''} not found" if missing else ""
@@ -241,7 +254,7 @@ def _use() -> None:
     # The files as text and the checked tables are not needed once the project is built, and they are big: Lumino's
     # 231,000-row export holds ~150 MB in them against ~1 MB for the built project. Opening Home also clears the
     # uploader, so nothing re-reads the files.
-    st.session_state.pop("data_sheets", None)
-    st.session_state.pop("data_report", None)
+    for key in ("data_sheets", "data_report", "data_guess", state.SESSION_RESULTS):
+        st.session_state.pop(key, None)
     st.session_state["dataset"] = state.CUSTOM
     st.session_state["section"] = "Home"

@@ -1,11 +1,15 @@
 """Which project the app is showing, and the cached sums.
 
 Every cached result is keyed by the data's fingerprint (hashed); the data itself is passed unhashed. So results for one
-project are never served for another, and nothing a user uploads ever lands in a cache other sessions share.
+project are never served for another. Results for the built-in projects (the host's and the sample) sit in
+`st.cache_data`, shared by every visitor; results for a visitor's own upload sit in that visitor's session only
+(`cached`), so nothing worked out from an upload stays on the server after the session ends.
 """
 
 from __future__ import annotations
 
+import copy
+import functools
 import logging
 
 import pandas as pd
@@ -24,6 +28,38 @@ BUNDLE, SAMPLE, CUSTOM = "bundle", "sample", "custom"
 WIDGET_PREFIXES = ("home_", "see_", "plan_", "boq_", "set_")  # per-project choices, cleared when the project changes
 TTL = 6 * 3600
 log = logging.getLogger("yardstick")
+SESSION_RESULTS = "_upload_results"  # this session's results for its own upload
+MAX_SESSION_RESULTS = 400
+
+
+def cached(**cache_kw):
+    """`st.cache_data` for the built-in projects; for a visitor's own upload (`Dataset.key == "custom"`), a memo in
+    that visitor's session. Each call returns a copy, as `st.cache_data` does, so a caller may change what it gets."""
+
+    def wrap(fn):
+        shared = st.cache_data(**cache_kw)(fn)
+        spinner = cache_kw.get("show_spinner")
+
+        @functools.wraps(fn)
+        def call(fp: str, _ds: Dataset, *args, **kwargs):
+            if _ds.key != CUSTOM:
+                return shared(fp, _ds, *args, **kwargs)
+            memo = st.session_state.setdefault(SESSION_RESULTS, {})
+            key = (fn.__name__, fp, args, tuple(sorted(kwargs.items())))
+            if key not in memo:
+                if len(memo) >= MAX_SESSION_RESULTS:
+                    memo.pop(next(iter(memo)))  # the oldest
+                if isinstance(spinner, str):
+                    with st.spinner(spinner):
+                        memo[key] = fn(fp, _ds, *args, **kwargs)
+                else:
+                    memo[key] = fn(fp, _ds, *args, **kwargs)
+            return copy.deepcopy(memo[key])
+
+        call.clear = shared.clear
+        return call
+
+    return wrap
 
 
 @st.cache_resource(show_spinner="Reading the project's records…")
@@ -50,7 +86,7 @@ def choose() -> Dataset:
     real, problem = bundled()
     options: dict[str, str] = {}
     if real is not None:
-        options[BUNDLE] = real.cfg.title
+        options[BUNDLE] = md(real.cfg.title)  # option labels render markdown
     options[SAMPLE] = "Sample project (made-up data)"
     custom = st.session_state.get("custom_ds")
     if isinstance(custom, Dataset):
@@ -85,7 +121,7 @@ def planner_limits(ds: Dataset) -> tuple[int, int, int]:
     return 3, top, min(Settings().takeover, top)
 
 
-@st.cache_data(show_spinner=False, max_entries=512, ttl=TTL)
+@cached(show_spinner=False, max_entries=512, ttl=TTL)
 def run_replay(
     fp: str,
     _ds: Dataset,
@@ -100,7 +136,7 @@ def run_replay(
     return replay(_ds.ledger, code, settings, boq=_ds.boq_qty(code))
 
 
-@st.cache_data(show_spinner="Replaying every item month by month…", max_entries=64, ttl=TTL)
+@cached(show_spinner="Replaying every item month by month…", max_entries=64, ttl=TTL)
 def run_all(
     fp: str,
     _ds: Dataset,
@@ -142,7 +178,7 @@ def run_all(
     return pd.DataFrame(rows)
 
 
-@st.cache_data(show_spinner="Replaying each lever on every item…", max_entries=64, ttl=TTL)
+@cached(show_spinner="Replaying each lever on every item…", max_entries=64, ttl=TTL)
 def run_levers(
     fp: str, _ds: Dataset, takeover: int, window: int, safety: float, cover_weeks: float, boq_cap: bool
 ) -> dict[str, pd.DataFrame]:
@@ -156,7 +192,7 @@ def run_levers(
     return out
 
 
-@st.cache_data(show_spinner="Building Monday's list…", max_entries=64, ttl=TTL)
+@cached(show_spinner="Building Monday's list…", max_entries=64, ttl=TTL)
 def run_week(
     fp: str, _ds: Dataset, month: str, takeover: int, cover_weeks: float | None, boq_cap: bool
 ) -> pd.DataFrame:
@@ -165,17 +201,17 @@ def run_week(
     return monday_list.week(_ds.ledger, month, settings, boq, _ds.sets)
 
 
-@st.cache_data(show_spinner=False, max_entries=32, ttl=TTL)
+@cached(show_spinner=False, max_entries=32, ttl=TTL)
 def run_calibration(fp: str, _ds: Dataset) -> pd.DataFrame:
     return setcheck.calibrate(_ds.ledger, _ds.sets)
 
 
-@st.cache_data(show_spinner="Comparing two ways to forecast each child…", max_entries=32, ttl=TTL)
+@cached(show_spinner="Comparing two ways to forecast each child…", max_entries=32, ttl=TTL)
 def run_bakeoff(fp: str, _ds: Dataset, takeover: int) -> pd.DataFrame:
     return setplan.bakeoff(_ds.ledger, _ds.sets, Settings(takeover=takeover))
 
 
-@st.cache_data(show_spinner=False, max_entries=64, ttl=TTL)
+@cached(show_spinner=False, max_entries=64, ttl=TTL)
 def run_balance(fp: str, _ds: Dataset, parent: str, basis: str, loose: bool):
     return setcheck.balance(
         _ds.ledger,

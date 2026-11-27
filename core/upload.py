@@ -22,21 +22,30 @@ import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
+import openpyxl
 import pandas as pd
+from openpyxl.cell.cell import ERROR_CODES
 
 from . import ingest
 from .config import META_KEYS
 from .dataset import Dataset, from_tables
 from .export import XLSX_OPTIONS
 from .fmt import month_label
+from .ledger import MAX_MONTHS, check_size
 
 log = logging.getLogger("yardstick")
 
 MAX_FILE_MB = 50  # keep in step with server.maxUploadSize in .streamlit/config.toml
 MAX_ROWS = 500_000  # per file or sheet (the largest real export seen: 231,077 rows)
 MAX_TOTAL_ROWS = 1_000_000  # across everything uploaded at once
-MAX_UNPACKED_MB = 400  # an .xlsx is a zip: refuse one that would unpack to more than this
+MAX_UNPACKED_MB = 200  # an .xlsx is a zip: refuse one that would unpack to more than this
 MAX_SHEETS = 20
+MAX_COLUMNS = 100  # a stores export has a few dozen at most; each row is cut to this as it is read
+MAX_HEADER_CHARS = 100  # a column name longer than this is cut (no real header is; matching cost grows with length)
+MAX_CELLS = 4_000_000  # rows x columns across one upload: ~2.5x Lumino's real export (231,077 rows x 7 columns)
+MAX_FILES = 12  # files read from one upload (a project has 7 tables)
+MAX_ZIP_RATIO = 100  # a real .xlsx part unpacks to ~7-8x its packed size; a bomb to thousands
+MAX_SHARED_TEXT_MB = 40  # the workbook's table of text cells, parsed whole when it is opened
 HEADER_SCAN = 20  # how many lines from the top may hold the header line
 MATCH = 0.8  # how close a column name must be to a known name to be suggested
 MIN_MONTHS = 7  # the replay learns from at least 3 months and scores at least 4 (see ui/state.planner_limits)
@@ -441,6 +450,7 @@ def _norm(text: object) -> str:
 
 
 KNOWN = {_norm(n) for t in TABLES for c in t.columns for n in (c.name, *c.also)}
+CLOSE_MAX = 2 * max(len(n) for n in KNOWN)  # close spelling is tried only on names up to this long
 
 
 def _header_at(rows: list[list[str]]) -> int:
@@ -448,12 +458,13 @@ def _header_at(rows: list[list[str]]) -> int:
     a report title and a date range above its header). The first line when no line has at least two."""
     best, at = 0, 0
     for i, row in enumerate(rows[:HEADER_SCAN]):
-        hits = len({_norm(c) for c in row} & KNOWN)
+        hits = len({_norm(str(c)[:MAX_HEADER_CHARS]) for c in row} & KNOWN)
         if hits > best:
             best, at = hits, i
     if best < 2:  # no exact names: try close spellings
         for i, row in enumerate(rows[:HEADER_SCAN]):
-            hits = sum(1 for c in row if len(_norm(c)) > 2 and difflib.get_close_matches(_norm(c), KNOWN, 1, MATCH))
+            names = [_norm(str(c)[:MAX_HEADER_CHARS]) for c in row]
+            hits = sum(1 for n in names if 2 < len(n) <= CLOSE_MAX and difflib.get_close_matches(n, KNOWN, 1, MATCH))
             if hits > best:
                 best, at = hits, i
     return at if best >= 2 else 0
@@ -477,25 +488,24 @@ def _tidy(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.dropna(how="all").reset_index(drop=True)
 
 
-def _sheet(source: str, name: str, rows: list[list[str]]) -> Sheet:
+def _sheet(source: str, name: str, rows: list[list[str]], budget: int = MAX_CELLS) -> Sheet:
+    """Rows of text (each already cut to `MAX_COLUMNS`) as a sheet: find the header line, pad the rows to it."""
     if not any(any(str(c).strip() for c in r) for r in rows):
         return Sheet(source, name, pd.DataFrame(), problem="it is empty")
     h = _header_at(rows)
-    header = _unique([str(c) for c in rows[h]])
+    header = _unique([str(c)[:MAX_HEADER_CHARS] for c in rows[h]])
     width = len(header)
+    if (len(rows) - h - 1) * width > budget:  # padding every row to the header would pass the budget
+        return Sheet(source, name, pd.DataFrame(), problem=_too_many_cells())
     body = [(list(r) + [None] * width)[:width] for r in rows[h + 1 :]]
     return Sheet(source, name, _tidy(pd.DataFrame(body, columns=header, dtype=object)), header_row=h + 1)
 
 
-def _from_frame(source: str, name: str, df: pd.DataFrame) -> Sheet | None:
-    """A sheet read without a header: find the header line in its first rows and apply it. None for an empty sheet."""
-    head = [["" if pd.isna(c) else str(c) for c in r] for r in df.head(HEADER_SCAN).itertuples(index=False)]
-    if not any(any(c.strip() for c in r) for r in head):
-        return None
-    h = _header_at(head)
-    body = df.iloc[h + 1 :].copy()
-    body.columns = _unique(head[h])
-    return Sheet(source, name, _tidy(body), header_row=h + 1)
+def _too_many_cells() -> str:
+    return (
+        f"together with the other files it holds more than {MAX_CELLS:,} cells, more than the free public app reads "
+        "at once: upload fewer files, or leave out columns Yardstick does not use"
+    )
 
 
 def _decode(data: bytes) -> str:
@@ -508,59 +518,108 @@ def _decode(data: bytes) -> str:
 
 
 def _delimiter(text: str) -> str:
-    head = text.splitlines()[:HEADER_SCAN]
+    head = text[:65_536].splitlines()[:HEADER_SCAN]  # only the top: splitting a whole 50 MB file would cost GBs
     counts = {d: sum(line.count(d) for line in head) for d in (",", ";", "\t", "|")}
     best = max(counts, key=counts.get)
     return best if counts[best] else ","
 
 
-def _read_csv(source: str, name: str, data: bytes) -> Sheet:
+def _read_csv(source: str, name: str, data: bytes, budget: int) -> Sheet:
     text = _decode(data)
     rows: list[list[str]] = []
+    cells = 0
     for row in csv.reader(io.StringIO(text), delimiter=_delimiter(text)):
+        row = row[:MAX_COLUMNS]
+        while row and not row[-1].strip():
+            row.pop()
         rows.append(row)
+        cells += len(row)
         if len(rows) > MAX_ROWS + HEADER_SCAN:
             return Sheet(source, name, pd.DataFrame(), problem=f"it has more than {MAX_ROWS:,} rows")
-    return _sheet(source, name, rows)
+        if cells > budget:
+            return Sheet(source, name, pd.DataFrame(), problem=_too_many_cells())
+    return _sheet(source, name, rows, budget)
 
 
-def _read_xlsx(source: str, data: bytes) -> list[Sheet]:
+def _cell_text(value: object) -> str:
+    """An Excel cell as the text pandas would have read (whole numbers without '.0'; errors such as #N/A as blank)."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, str) and value in ERROR_CODES:
+        return ""
+    return str(value)
+
+
+def _read_xlsx(source: str, data: bytes, budget: int) -> list[Sheet]:
     stem = source.rsplit(".", 1)[0]
+
+    def bad(why: str) -> list[Sheet]:
+        return [Sheet(source, stem, pd.DataFrame(), problem=why)]
+
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             parts = z.infolist()
     except zipfile.BadZipFile:
-        return [Sheet(source, stem, pd.DataFrame(), problem="it is not a valid .xlsx workbook")]
+        return bad("it is not a valid .xlsx workbook")
     if len(parts) > 5000 or sum(p.file_size for p in parts) > MAX_UNPACKED_MB * 2**20:
-        return [Sheet(source, stem, pd.DataFrame(), problem=f"it would unpack to more than {MAX_UNPACKED_MB} MB")]
-    book = pd.read_excel(
-        io.BytesIO(data),
-        sheet_name=None,
-        header=None,
-        dtype=str,
-        nrows=MAX_ROWS + HEADER_SCAN + 1,
-        engine="openpyxl",  # pandas opens it read-only; openpyxl parses the XML with defusedxml when installed
-    )
-    out = []
-    for i, (sheet, df) in enumerate(book.items()):
-        src = f"{source} › {sheet}"
-        if i >= MAX_SHEETS:
-            out.append(Sheet(src, str(sheet), pd.DataFrame(), problem=f"only the first {MAX_SHEETS} sheets are read"))
-            break
-        if str(sheet) == GUIDE_SHEET:
-            continue
-        if len(df) > MAX_ROWS + HEADER_SCAN:
-            out.append(Sheet(src, str(sheet), pd.DataFrame(), problem=f"it has more than {MAX_ROWS:,} rows"))
-            continue
-        read = _from_frame(src, str(sheet), df)
-        if read is not None:  # an empty sheet holds nothing to read
-            out.append(read)
-    return out or [Sheet(source, stem, pd.DataFrame(), problem="it has no rows")]
+        return bad(f"it would unpack to more than {MAX_UNPACKED_MB} MB")
+    if any(p.file_size > 2**20 and p.file_size > MAX_ZIP_RATIO * max(p.compress_size, 1) for p in parts):
+        return bad(f"a part of it unpacks to more than {MAX_ZIP_RATIO} times its size, which no real workbook does")
+    if any(
+        p.filename.lower().endswith("sharedstrings.xml") and p.file_size > MAX_SHARED_TEXT_MB * 2**20 for p in parts
+    ):
+        return bad(f"it holds more than {MAX_SHARED_TEXT_MB} MB of text: save the sheets as CSV files instead")
+    # Read-only and values only: openpyxl streams the sheets, parses the XML with defusedxml (installed), and each row
+    # is cut to MAX_COLUMNS while it is read (pandas would pad every row to the widest cell in the sheet).
+    book = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    out: list[Sheet] = []
+    try:
+        for i, ws in enumerate(book.worksheets):
+            title = str(ws.title)
+            src = f"{source} › {title}"
+            if i >= MAX_SHEETS:
+                out.append(Sheet(src, title, pd.DataFrame(), problem=f"only the first {MAX_SHEETS} sheets are read"))
+                break
+            if title == GUIDE_SHEET:
+                continue
+            rows: list[list[str]] = []
+            cells, why = 0, ""
+            for values in ws.iter_rows(values_only=True, max_col=MAX_COLUMNS):
+                row = [_cell_text(v) for v in values]
+                while row and not row[-1].strip():
+                    row.pop()
+                rows.append(row)
+                cells += len(row)
+                if len(rows) > MAX_ROWS + HEADER_SCAN:
+                    why = f"it has more than {MAX_ROWS:,} rows"
+                    break
+                if cells > budget:
+                    why = _too_many_cells()
+                    break
+            if why:
+                out.append(Sheet(src, title, pd.DataFrame(), problem=why))
+                continue
+            if not any(rows):  # an empty sheet holds nothing to read
+                continue
+            sheet = _sheet(src, title, rows, budget)
+            budget -= len(sheet.frame) * len(sheet.frame.columns)
+            out.append(sheet)
+    finally:
+        book.close()
+    return out or bad("it has no rows")
 
 
-def read_upload(name: str, data: bytes) -> list[Sheet]:
+def cells(sheets: Iterable[Sheet]) -> int:
+    """How many cells the sheets hold (what the upload's cell budget counts)."""
+    return sum(len(s.frame) * len(s.frame.columns) for s in sheets)
+
+
+def read_upload(name: str, data: bytes, budget: int = MAX_CELLS) -> list[Sheet]:
     """One uploaded file as sheets of text (a CSV is one sheet). It never raises: a file that cannot be read comes back
-    as one sheet with `problem` set, in words the visitor can act on."""
+    as one sheet with `problem` set, in words the visitor can act on. `budget` is how many cells the upload may still
+    hold (`MAX_CELLS` less what the other files of the same upload hold)."""
     stem, _, ext = name.rpartition(".")
     stem, ext = (stem or name), ext.lower()
 
@@ -571,8 +630,10 @@ def read_upload(name: str, data: bytes) -> list[Sheet]:
         return bad(f"it is bigger than {MAX_FILE_MB} MB")
     if ext not in ("csv", "txt", "xlsx"):
         return bad("only .xlsx and .csv files can be read: save it as one of those first")
+    if budget <= 0:
+        return bad(_too_many_cells())
     try:
-        return _read_xlsx(name, data) if ext == "xlsx" else [_read_csv(name, stem, data)]
+        return _read_xlsx(name, data, budget) if ext == "xlsx" else [_read_csv(name, stem, data, budget)]
     except Exception:  # noqa: BLE001 - a file from a visitor: say it could not be read, never take the page down
         log.exception("could not read an uploaded %s file", ext)
         return bad(f"it could not be read as {'an Excel workbook' if ext == 'xlsx' else 'a CSV file'}")
@@ -583,15 +644,17 @@ def read_upload(name: str, data: bytes) -> list[Sheet]:
 
 def _score(text: str, names: Iterable[str]) -> float:
     """1 for the exact name, 0.95 for an exact alternative, else how close the spelling is (0 to 1)."""
-    h = _norm(text)
+    h = _norm(str(text)[:MAX_HEADER_CHARS])
     if not h:
         return 0.0
+    close = len(h) <= CLOSE_MAX  # no known name is anywhere near this long: only an exact match could count
     best = 0.0
     for i, name in enumerate(names):
         n = _norm(name)
         if h == n:
             return 1.0 if i == 0 else 0.95
-        best = max(best, difflib.SequenceMatcher(None, h, n).ratio())
+        if close:
+            best = max(best, difflib.SequenceMatcher(None, h, n).ratio())
     return best
 
 
@@ -828,7 +891,8 @@ def _check_moves(name: str, df: pd.DataFrame, qty: str, known: set[str]) -> tupl
             Check(
                 WARN,
                 t.label,
-                f"{bad_date.sum():,} of {_n(n, 'row')} with a date that could not be read (for example "
+                f"{bad_date.sum():,} of {_n(n, 'row')} with a date that could not be read or is outside 1990 to 2100 "
+                f"(for example "
                 f"{_eg(df.loc[bad_date, 'date'])}): left out.",
             )
         )
@@ -984,6 +1048,22 @@ def validate(tables: dict[str, pd.DataFrame]) -> list[Check]:
         )
     elif used and MIN_MONTHS <= n < SHORT_MONTHS:
         out.append(Check(WARN, "All", f"The records cover only {n} months, so the results will be rough."))
+    elif used and n > MAX_MONTHS:
+        out.append(
+            Check(
+                FAIL,
+                "All",
+                f"The records span {n} months; Yardstick reads up to {MAX_MONTHS}. Check for a mistyped year.",
+            )
+        )
+    if used and n <= MAX_MONTHS:
+        godowns = set()
+        for rows in used:
+            if "godown" in rows:
+                godowns |= set(rows["godown"].dropna().astype(str).str.strip()) - {""}
+        too_big = check_size(len(known), len(godowns), n)
+        if too_big:
+            out.append(Check(FAIL, "All", f"The project is too big: {too_big}. Upload one project at a time."))
     if "sets" in tables:
         out += _check_sets(tables["sets"], known)
     if "boq" in tables:

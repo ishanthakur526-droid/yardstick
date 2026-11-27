@@ -40,7 +40,7 @@ def render(ds: Dataset) -> None:
     if anchor:
         example = example_quantity(ds)
         anchors = b1.number_input(
-            f"{noun.capitalize()} on the BOQ",
+            f"{md(noun.capitalize())} on the BOQ",
             min_value=0,
             max_value=5_000_000,
             value=example,

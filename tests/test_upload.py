@@ -108,7 +108,7 @@ def test_the_check_says_what_is_left_out():
     raw["items"].loc[3] = ["A100", "THE SAME CODE AGAIN", "NOS", "10"]
     checks = upload.validate(raw)
     warned = " | ".join(said(checks, upload.WARN))
-    assert "could not be read (for example '31/13/2024')" in warned
+    assert "could not be read or is outside 1990 to 2100 (for example '31/13/2024')" in warned
     assert "not a number (for example 'twelve')" in warned
     assert "not in the items table (for example 'Z999')" in warned
     assert "1 row with a negative quantity" in warned

@@ -85,16 +85,42 @@ def godown_labels(godowns: list[str], closing: Iterable[str] = ()) -> dict[str, 
     return labels
 
 
+MAX_MONTHS = 120  # ten years of records
+MAX_GODOWNS = 100
+MAX_ITEMS = 2_000
+MAX_GRID = 250_000  # items x godowns x months: the ledger and every replay grow with it (Lumino's Kanpur: ~4,000)
+
+
 def month_range(*month_columns: pd.Series) -> list[str]:
     seen = pd.concat(month_columns).dropna().unique()
     periods = pd.PeriodIndex(seen, freq="M")
+    span = (periods.max() - periods.min()).n + 1
+    if span > MAX_MONTHS:
+        raise ValueError(f"the records span {span} months, more than the {MAX_MONTHS} Yardstick reads")
     return [str(p) for p in pd.period_range(periods.min(), periods.max(), freq="M")]
+
+
+def check_size(items: int, godowns: int, months: int) -> str:
+    """Why a project is too big to replay on the free public app ("" when it is not)."""
+    if items > MAX_ITEMS:
+        return f"{items:,} items, more than the {MAX_ITEMS:,} Yardstick reads at once"
+    if godowns > MAX_GODOWNS:
+        return f"{godowns:,} godowns, more than the {MAX_GODOWNS:,} Yardstick reads at once"
+    if items * godowns * months > MAX_GRID:
+        return (
+            f"{items:,} items x {godowns:,} godowns x {months:,} months is {items * godowns * months:,} item-months to "
+            f"replay, more than the {MAX_GRID:,} the free public app replays at once"
+        )
+    return ""
 
 
 def build_ledger(flows: pd.DataFrame, used: pd.DataFrame, items: pd.DataFrame, closing: Iterable[str] = ()) -> Ledger:
     closing = set(closing)
     months = month_range(flows["month"], used["month"])
     places = sorted(flows["godown"].unique(), key=lambda g: (g in closing, g))
+    too_big = check_size(len(items), len(places), len(months))
+    if too_big:
+        raise ValueError(f"the project is too big: {too_big}")
 
     idx = pd.MultiIndex.from_product([items["item_code"], places, months], names=["item_code", "godown", "month"])
     grid = flows.set_index(["item_code", "godown", "month"])[FLOW_COLS].reindex(idx).fillna(0.0).reset_index()
