@@ -12,6 +12,7 @@ import streamlit as st
 from core.fmt import month_label
 from core.safe import md
 from ui import about, buylist, home, plan, see, state
+from ui import data as data_ui
 from ui import sets as sets_ui
 
 st.set_page_config(page_title="Yardstick · stock and ordering planner", page_icon="📏", layout="wide")
@@ -38,6 +39,7 @@ SECTIONS = {
     "Requisition": buylist.render,
     "Match the sets": sets_ui.render,
     "About the data": about.render,
+    "Your data": data_ui.render,
 }
 if ds.sets.empty:
     SECTIONS.pop("Match the sets")
@@ -51,5 +53,5 @@ except Exception:  # noqa: BLE001 - one section failing must not take the page d
     log.exception("section %r failed on project %s", section, ds.fingerprint)
     st.error(
         "This section hit a problem with this project's data, so it cannot be shown. The other sections still work. "
-        "If the data was uploaded, check it on the Data screen."
+        "If the data was uploaded, check it on the Your data screen."
     )

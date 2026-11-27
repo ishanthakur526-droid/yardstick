@@ -6,9 +6,10 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from conftest import real
+from core import upload
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
-SECTIONS = ["Home", "See it", "Plan it", "Requisition", "Match the sets", "About the data"]
+SECTIONS = ["Home", "See it", "Plan it", "Requisition", "Match the sets", "About the data", "Your data"]
 
 
 def run(section: str, dataset: str, custom=None) -> AppTest:
@@ -83,3 +84,39 @@ def test_rupees_appear_only_after_a_rate_is_typed():
     assert_clean(at)
     assert [m for m in at.markdown if "1 priced item" in m.value]
     assert any("₹" in str(df.value.to_dict()) for df in at.dataframe)
+
+
+def uploaded(sheets) -> AppTest:
+    """The Your data screen with files already read (AppTest cannot drive a file upload, so they are put in place)."""
+    at = AppTest.from_file(APP, default_timeout=300)
+    at.session_state["section"] = "Your data"
+    at.session_state["data_sheets"] = {"sig": (), "sheets": sheets}
+    at.run()
+    return at
+
+
+def test_an_upload_is_checked_then_put_to_use(sample_raw):
+    at = uploaded(upload.read_upload("sample.xlsx", upload.template_bytes(sample_raw)))
+    assert not at.exception, [e.value for e in at.exception]
+    assert [s for s in at.success if "Ready" in s.value]
+    at.text_input(key="data_project").set_value("Test upload")
+    at.button(key="data_use").click().run()
+    assert_clean(at)
+    assert at.session_state["dataset"] == "custom" and at.session_state["section"] == "Home"
+    assert "Test upload" in at.caption[0].value
+
+
+def test_an_upload_that_fails_its_check_cannot_be_used():
+    at = uploaded(upload.read_upload("yardstick_template.xlsx", upload.template_bytes()))
+    assert not at.exception, [e.value for e in at.exception]
+    assert [e for e in at.error if "Not ready" in e.value]
+    assert not [b for b in at.button if b.key == "data_use"]
+
+
+def test_removing_an_upload_goes_back_to_a_built_in_project(minimal_ds):
+    at = run("Your data", "custom", custom=minimal_ds)
+    assert [s for s in at.success if "In use" in s.value]
+    at.button(key="data_remove").click().run()
+    assert_clean(at)
+    assert "custom_ds" not in at.session_state
+    assert at.session_state["dataset"] in {"sample", "bundle"}

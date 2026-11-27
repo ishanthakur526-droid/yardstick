@@ -16,6 +16,7 @@ from core.bundle import BundleError, load_tables
 from core.dataset import Dataset, from_tables
 from core.fmt import short_item
 from core.planner import DEFAULT_COVER_WEEKS, Settings, counts, replay
+from core.safe import md
 
 BUNDLE, SAMPLE, CUSTOM = "bundle", "sample", "custom"
 WIDGET_PREFIXES = ("home_", "see_", "plan_", "boq_", "set_")  # per-project choices, cleared when the project changes
@@ -46,13 +47,15 @@ def choose() -> Dataset:
     options[SAMPLE] = "Sample project (made-up data)"
     custom = st.session_state.get("custom_ds")
     if isinstance(custom, Dataset):
-        options[CUSTOM] = f"Your data: {custom.cfg.project}"
+        options[CUSTOM] = f"Your data: {md(custom.cfg.project)}"  # option labels render markdown
     if st.session_state.get("dataset") not in options:
         st.session_state["dataset"] = next(iter(options))
     with st.sidebar:
         choice = st.radio("Project data", list(options), format_func=options.get, key="dataset")
         if problem:
             st.warning(problem)
+        if CUSTOM not in options:
+            st.caption("To use your own project's records, open **Your data**.")
     ds = real if choice == BUNDLE else (custom if choice == CUSTOM else sample())
     if st.session_state.get("_shown") != ds.fingerprint:  # a different project: forget choices made on the last one
         for key in [k for k in st.session_state if str(k).startswith(WIDGET_PREFIXES)]:
