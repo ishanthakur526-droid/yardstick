@@ -135,3 +135,53 @@ def test_an_upload_with_markup_in_its_names_shows_it_as_text():
     strings = markdown_strings(at)
     assert sum("evil" in text for _, _, text in strings) > 5, "the names should be on screen (escaped)"
     assert not live(strings), live(strings)
+
+
+FORMULA = '=HYPERLINK("https://evil.example","x")'
+
+
+def _formulas(data: bytes) -> tuple[int, int]:
+    """(cells holding the formula text as a string, cells holding it as a formula) in a workbook."""
+    import io
+
+    import openpyxl
+
+    as_text = as_formula = 0
+    for ws in openpyxl.load_workbook(io.BytesIO(data)).worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str) and "HYPERLINK" in cell.value:
+                    as_text += cell.data_type == "s"
+                    as_formula += cell.data_type == "f"
+    return as_text, as_formula
+
+
+def test_every_workbook_writes_text_from_the_data_as_text():
+    """The plan, the buy list, the sample in the upload format, the pack and the BOM fix sheet (whose builders share
+    `export.XLSX_OPTIONS`): an item named like a formula is written as a string, never as a formula or a link."""
+    from core import export, upload
+    from core import pack as weekly
+    from core import requisition as reqs
+    from core.planner import Settings, replay
+    from ui.state import run_all
+
+    raw = {name: df.copy() for name, df in synth.make_pack().items()}
+    code = raw["items"]["item_code"].iloc[0]
+    for df in raw.values():
+        if "item_name" in df.columns:
+            df.loc[df["item_code"] == code, "item_name"] = FORMULA
+    ds = from_tables(ingest.monthly_tables(raw), key="custom")
+    d = Settings()
+    r = replay(ds.ledger, code, d, boq=ds.boq_qty(code))
+    month = ds.ledger.months[12]
+    books = {
+        "plan": export.workbook(
+            r, month, FORMULA, run_all(ds.fingerprint, ds, d.takeover, d.window, d.safety), FORMULA
+        ),
+        "buy list": export.requisition_workbook(reqs.requisition(ds.ledger, ds.sets, {code: 100.0}), source=FORMULA),
+        "upload format": upload.template_bytes(raw),
+        "pack": weekly.workbook(weekly.build(ds, month, Settings())),
+    }
+    for name, data in books.items():
+        as_text, as_formula = _formulas(data)
+        assert as_text and not as_formula, (name, as_text, as_formula)
