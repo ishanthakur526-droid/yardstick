@@ -35,13 +35,16 @@ def test_sheets_follow_mondays_list(sample_ds):
 
 def test_the_pack_does_not_use_the_future(sample_raw, sample_ds):
     months = sample_ds.ledger.months
-    for i in (12, 20):
+    alerts = 0
+    for i in (7, 8, 12, 20):  # 7 and 8 have set alerts, whose thresholds scale with the project's size so far
         shaken = shaken_future(sample_raw, months[i], months[i + 5])
         a = pack.build(sample_ds, months[i])
         b = pack.build(shaken, months[i])
         for name in pack.SHEETS:
             pd.testing.assert_frame_equal(a.sheets[name], b.sheets[name], obj=name)
         assert a.counts == b.counts
+        alerts += a.counts["set_alerts"]
+    assert alerts > 0 and sample_ds.cfg.scaled == (True, True)
 
 
 def test_set_alerts_and_bom_fixes_are_as_of_the_month(sample_ds):

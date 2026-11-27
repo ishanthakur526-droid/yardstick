@@ -402,3 +402,11 @@ def test_as_drawn_books_contractors_returns_back_into_the_godowns():
     assert with_back["plan_arrived"].sum() + 70.0 - with_back["plan_issued"].sum() == pytest.approx(
         with_back["plan_godown"].iloc[-1], abs=1e-6
     )
+
+
+def test_rounding_up_keeps_the_items_own_decimals():
+    from core.planner import _up
+
+    assert _up(np.array([0.00004]), 0.0001)[0] == 0.0001
+    assert _up(np.array([0.0051]), 0.001)[0] == 0.006
+    assert _up(np.array([2.3, 0.0]), 1.0).tolist() == [3.0, 0.0]

@@ -90,7 +90,8 @@ def position(ledger: Ledger, code: str, i: int, settings: Settings) -> Position:
 def from_sets(ledger: Ledger, sets: pd.DataFrame | None, code: str, i: int, settings: Settings) -> float | None:
     """A child's forecast from its parents, when the bake-off up to this month says it is no worse than its own."""
     if (
-        sets is None
+        settings.cover_weeks is None  # demand is contractors' draws then, not site use: the bake-off does not apply
+        or sets is None
         or sets.empty
         or code not in set(sets["child_code"])
         or not adopt_at(ledger, sets, code, i, settings)
@@ -112,7 +113,8 @@ def item_actions(
     p = position(ledger, code, i, settings)
     unit, step = ledger.unit(code), ledger.step(code)
     name = ledger.item_name(code)
-    received_total = float(ledger.grid.loc[ledger.grid["item_code"] == code, "received"].sum())
+    g = ledger.grid
+    received_total = float(g.loc[(g["item_code"] == code) & g["godown"].isin(ledger.working), "received"].sum())
     cap, cap_source = cap_for(settings, received_total, boq)
     room = max(0.0, cap - p.bought)
 
@@ -150,6 +152,8 @@ def item_actions(
         lands = month_label(lands_month) if lands_month else "after the last recorded month"
         split = ", ".join(f"{lab[g]} {indian(x)}" for g, x in enumerate(d.order) if x > 0)
         held_note = f" Contractors hold {q(max(extra, 0.0))} beyond their cover, counted first." if extra > 0 else ""
+        if extra < -step:
+            held_note = f" Contractors hold {q(-extra)} less than their cover, so the order also refills them."
         if f_sets is not None:
             held_note += (
                 " Demand is forecast from its sets (its parents' forecast times the ratio the site has shown so far), "

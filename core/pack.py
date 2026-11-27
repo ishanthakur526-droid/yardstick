@@ -24,6 +24,7 @@ import pandas as pd
 from . import bomfix, holdings, money
 from . import sets as setcheck
 from .actions import monday, week
+from .config import scaled_thresholds
 from .dataset import Dataset
 from .export import XLSX_OPTIONS, _source_line
 from .fmt import month_label
@@ -50,6 +51,18 @@ def _rounded(ledger, codes: pd.Series, qty: pd.Series) -> list[float]:
     return [round(float(q), ledger.decimals(c)) for c, q in zip(codes, qty)]
 
 
+def as_of_thresholds(ds: Dataset, month: str) -> tuple[float, float]:
+    """The set-imbalance thresholds as of `month`. Thresholds the data gives are used as they are; thresholds scaled to
+    the project's size are scaled again on the months before `month` only (the whole project's size is the future)."""
+    p, s = ds.cfg.min_parents, ds.cfg.min_sets
+    if any(ds.cfg.scaled):
+        flows = ds.tables["flows"]
+        early_p, early_s = scaled_thresholds(flows[flows["month"] < month], ds.sets)
+        p = early_p if ds.cfg.scaled[0] else p
+        s = early_s if ds.cfg.scaled[1] else s
+    return p, s
+
+
 def set_alerts(ds: Dataset, month: str) -> pd.DataFrame:
     """Every godown's set account at the end of the month before `month`, with ratios learned from the months before
     it (never the whole project)."""
@@ -58,12 +71,11 @@ def set_alerts(ds: Dataset, month: str) -> pd.DataFrame:
     if ds.sets.empty or i == 0:
         return pd.DataFrame()
     cal = setcheck.calibrate(led, ds.sets, before=month)
+    min_parents, min_sets = as_of_thresholds(ds, month)
     last = led.months[i - 1]
     frames = []
     for parent in dict.fromkeys(cal["parent_code"]):
-        view = setcheck.balance(
-            led, ds.sets, parent, "observed", cal=cal, min_parents=ds.cfg.min_parents, min_sets=ds.cfg.min_sets
-        )
+        view = setcheck.balance(led, ds.sets, parent, "observed", cal=cal, min_parents=min_parents, min_sets=min_sets)
         f = setcheck.flagged(view)
         f = f[f["month"] == last]
         if len(f):
@@ -241,7 +253,9 @@ def assumptions(ds: Dataset, month: str, settings: Settings, priced: bool) -> li
             "A child item is forecast from its sets (its parents' forecast times the ratio the site has shown so far) "
             "only where that has done no worse than its own history up to this month.",
             "Set alerts: issues to the end of last month, at the ratio the site had shown by then; 15% off is 'watch', "
-            "30% 'serious'; only children whose use follows the parent closely are judged.",
+            "30% 'serious'; only children whose use follows the parent closely are judged. A gap counts once a godown "
+            "has issued enough parents and the gap is big enough; where the data does not give those two thresholds, "
+            "they are scaled to the project's size as it stood then.",
             "BOM fixes: ratios from site use up to last month. Nothing is changed in the master data; a person approves "
             "every line. A ratio more than 100 times off is more likely a unit mismatch than a wrong count.",
         ]

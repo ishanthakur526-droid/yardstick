@@ -81,6 +81,8 @@ def test_an_adopted_child_is_planned_from_its_sets(sample_ds):
     assert from_sets(led, sets, "SNB001", j, st) is None  # not adopted then: its own history
     assert from_sets(led, sets, "SPO001", i, st) is None  # not a child
     assert from_sets(led, None, "SLU001", i, st) is None  # no sets table
+    drawn = Settings(cover_weeks=None)  # demand is contractors' draws, not site use: the set forecast does not apply
+    assert from_sets(led, sets, "SLU001", i, drawn) is None
     p = position(led, "SLU001", i, st)
     d = decide(p.past_total, p.past_by_godown, p.have, p.coming, 1e9, p.lead, 1.0, st, f_total=f)
     assert d.forecast.sum() == pytest.approx(f)

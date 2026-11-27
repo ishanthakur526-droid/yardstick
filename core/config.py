@@ -41,6 +41,9 @@ class ProjectConfig:
     min_sets: float = 300.0
     requisition_example: float | None = None
     is_sample: bool = False
+    # which of (min_parents, min_sets) were scaled from the records rather than given: an as-of view must
+    # scale them again from the months before it (see `scaled_thresholds`)
+    scaled: tuple[bool, bool] = (False, False)
     assumed: tuple[str, ...] = ()  # what was worked out rather than given
 
     @property
@@ -99,6 +102,18 @@ def infer_anchor(items: pd.DataFrame, sets: pd.DataFrame, flows: pd.DataFrame) -
     return str(ranked["item_code"].iloc[0])
 
 
+def scaled_thresholds(flows: pd.DataFrame, sets: pd.DataFrame) -> tuple[float, float]:
+    """Set-imbalance thresholds scaled to the biggest parent's net issue in `flows` (pass only the months an as-of view
+    may read)."""
+    biggest = 0.0
+    if len(sets) and len(flows):
+        out = flows.assign(net=flows["issue"] - flows["ret"]).groupby("item_code")["net"].sum()
+        biggest = float(out.reindex(sets["parent_code"].unique()).fillna(0.0).max())
+    parents = max(20.0, round(biggest * MIN_PARENTS_SHARE)) if biggest > 0 else 2000.0
+    sets_ = max(5.0, round(biggest * MIN_SETS_SHARE)) if biggest > 0 else 300.0
+    return parents, sets_
+
+
 def build_config(tables: dict[str, pd.DataFrame]) -> ProjectConfig:
     meta = read_meta(tables.get("meta"))
     items, flows = tables["items"], tables["flows"]
@@ -127,15 +142,11 @@ def build_config(tables: dict[str, pd.DataFrame]) -> ProjectConfig:
                 f"The BOQ is assumed to count in {name} ({anchor}), the longest-lead item that is not part of a set."
             )
 
-    biggest = 0.0
-    if len(sets):
-        out = flows.assign(net=flows["issue"] - flows["ret"]).groupby("item_code")["net"].sum()
-        biggest = float(out.reindex(sets["parent_code"].unique()).fillna(0.0).max())
     min_parents = _number(meta.get("min_parents"))
     min_sets = _number(meta.get("min_sets"))
+    scaled = (min_parents is None, min_sets is None)
     if min_parents is None or min_sets is None:
-        scaled_p = max(20.0, round(biggest * MIN_PARENTS_SHARE)) if biggest else 2000.0
-        scaled_s = max(5.0, round(biggest * MIN_SETS_SHARE)) if biggest else 300.0
+        scaled_p, scaled_s = scaled_thresholds(flows, sets)
         min_parents = scaled_p if min_parents is None else min_parents
         min_sets = scaled_s if min_sets is None else min_sets
         if len(sets):
@@ -156,5 +167,6 @@ def build_config(tables: dict[str, pd.DataFrame]) -> ProjectConfig:
         min_sets=float(min_sets),
         requisition_example=_number(meta.get("requisition_example")),
         is_sample=meta.get("sample", "0") in {"1", "true", "yes"},
+        scaled=scaled,
         assumed=tuple(notes),
     )

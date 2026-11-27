@@ -102,8 +102,13 @@ def allocation_shares(net_issue: np.ndarray) -> np.ndarray:
     return w
 
 
+def _places(step: float) -> int:
+    """Decimal places of an ordering step (1 -> 0, 0.01 -> 2, 0.0001 -> 4)."""
+    return max(0, int(round(-math.log10(step)))) if step > 0 else 2
+
+
 def _up(x: np.ndarray, step: float) -> np.ndarray:
-    return np.where(x > 1e-9, np.round(np.ceil(np.round(x / step, 6)) * step, 2), 0.0)
+    return np.where(x > 1e-9, np.round(np.ceil(np.round(x / step, 6)) * step, _places(step)), 0.0)
 
 
 def _down(x: float, step: float) -> float:
@@ -344,6 +349,7 @@ def simulate(
                     "order": order[g],
                     "action": action,
                     "asked": need[g],
+                    # pooled: the site's shortage spread over the godowns by their shortfall, not the godown's own
                     "shortage": short_g[g],
                     "stock_end": stock[g],
                 }

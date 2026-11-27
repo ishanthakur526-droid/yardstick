@@ -1,6 +1,7 @@
 # HANDOVER
 
-Last update: Thu 26 Nov 2026, late evening IST. Phase 2 of the v2 rebuild (the lever waterfall and the new Home) is done and released as **v1.2** (on `main`).
+Last update: Fri 27 Nov 2026, IST. Phase 3 of the v2 rebuild (actions: the weekly pack, BOM fix sheet, contractor
+holdings, money layer, set-driven children) is done, reviewed by Opus and released as **v1.3** (on `main`).
 
 The day-one hackathon build is preserved at tag `vch3-submission` (commit e1da49c) and in the frozen repo
 `ishanthakur526-droid/vch3-yardstick`. **Never push to that repo.** This repo (`ishanthakur526-droid/yardstick`)
@@ -10,8 +11,11 @@ carries its history and is where all work continues.
 - **Branches:** work on `dev`, push often (CI runs ruff + pytest on Python 3.12 on every push). Fast-forward `main`
   only at the end of a green phase and tag it (`v1.1`, `v1.2`, ...). The Streamlit app deploys from `main`.
 - **Live app:** not yet deployed from this repo (the owner deploys it; see "Deploy" below).
-- **Tests:** 115, all green locally (real-project tests included); the real-project tests skip in CI.
-- **What v1.2 adds:** the levers framing (see "Phase 2, as built" below): Home is the first screen.
+- **Tests:** 147, all green locally (real-project tests included); the real-project tests skip in CI.
+- **What v1.3 adds:** the actions (see "Phase 3, as built" below): the weekly action pack on Home, the BOM fix
+  sheet and the set-driven bake-off on Match the sets, contractor holdings against the rule, rupees from the
+  visitor's own rates.
+- **What v1.2 added:** the levers framing (see "Phase 2, as built" below): Home is the first screen.
 - **What v1.1 was:** the day-one features (See it, Plan it, Requisition, Match the sets, About), now working on any
   project's data:
   - `core/config.py`: the anchor item (what a BOQ counts in), closing stores, set thresholds, labels, read from an
@@ -83,24 +87,53 @@ python tools/make_bundle.py <folder with the csv files> --meta <meta.json> --sec
   number tiles wrap (`ui.common.tiles`) instead of cutting numbers off; widget keys go through `ui.state.k(name)`, which
   adds the project's fingerprint (after a project switch the browser kept showing the old item's name).
 
+## Phase 3, as built (v1.3)
+- **Weekly action pack** (`core/pack.py`): `build(ds, month, settings, rates, actions)` returns the sheets as tables
+  (Summary, Transfers, Orders, Issue holds, Set alerts, BOM fixes, Assumptions); `workbook`/`write_sheets` write them
+  with `export.XLSX_OPTIONS`. Order by = the first Monday of the as-of month; each order line says the month it lands.
+  Set alerts are the `sets.balance` rows at the end of the month before, with ratios from `calibrate(before=month)`.
+  **PO hold/accelerate is cut**: the data has no open-orders table (the pack's assumptions say so). On Home the pack is
+  a `download_button` with a callable, so it is built only on click (AppTest does not click it; `tests/test_pack.py`
+  covers `build` and the bytes).
+- **BOM fix sheet** (`core/bomfix.py`): Keep / Change the ratio / Check the unit first (beyond 100x, `UNIT_SUSPECT`);
+  suggested ratio to three figures; blank "approved" columns. Nothing is ever applied. Downloadable on Match the sets
+  (whole project) and in the pack (as of the month).
+- **Contractor holdings** (`core/holdings.py`): `series` (start of each month: held at last month end, allowed =
+  cover x forecast of use so far, excess, weeks held, alert when excess > one step) and `at(month)`. Monday's list uses
+  the same `allowed` rule, so its issue holds equal the alerts (tested). Home shows the series as a chart.
+- **Money** (`core/money.py`): `clean_rates`, `item_value`, `portfolio`, `rupees`. Rates and the cost of capital
+  (placeholder 12%) live in a `st.data_editor` keyed per project (`home_rates@...`), session only; they never enter a
+  cache. The "saving that counts" adds up only items whose step keeps shortage within 1%. **No rupee figure for the real
+  project is written anywhere** (tests use made-up rates on the sample).
+- **Set-driven children** (`core/setplan.py`): driver = each parent's use x its stated ratio, added over the child's
+  sets; forecast = `cumsum(child[:t]) / cumsum(driver[:t])` x `planner.forecast(driver[:t])`, falling back to the
+  child's own forecast before any parent use. `bakeoff` scores WAPE over lead + 1 months on the replay's scored months;
+  `adopt_at(t)` repeats it on spans fully before t. `planner.decide(..., f_total=)` takes the forecast; only Monday's
+  list (and so the pack) uses it, and only for a child adopted as of that month. **The replay and the waterfall stay
+  per item.** Real project: 2 of 6 children adopted (one clear win, one tie); sample: 2 of 3.
+- **`sets.calibrate(before=)`** reads only months before; with no use yet the factor is nan and the line is "Keep".
+- **Tests:** a shared `shaken_future()` in `tests/conftest.py` scrambles everything from a month on; used for holdings,
+  the as-of calibration, the set forecast and its adoption, Monday's list with sets, and every sheet of the pack.
+- **Opus review #1 (lever maths), 27 Nov.** Verified: no look-ahead in the replay (scrambles over 4 months x 9 items
+  x cover None/0/2/6), conservation and the pool identity on 3,000 random scenarios, the pool never negative,
+  cover 0 = the old basis, the cap never breached after rounding, the 1% rule's numerator and denominator in both
+  modes, the bake-off scored on the same spans. **Must-fix, fixed:** set-imbalance thresholds scaled to the
+  whole project's size leaked the future into the pack's as-of set alerts; `ProjectConfig.scaled` now records
+  which were scaled and `pack.as_of_thresholds` scales them again on the months before (the pack scramble test
+  now includes months with alerts). **Should-fix, fixed:** no set forecast on the as-drawn basis; the order's
+  reason names a contractor top-up; `_up` keeps the item's own decimals; Monday's stand-in cap counts the same
+  godowns as the replay; the pooled per-godown `shortage` column is documented as the site's shortage spread
+  over the godowns.
+
 ## Next: the v2 phases
-- **Phase 3: actions.**
-  - Weekly action pack (xlsx) built on `core/actions.week`: orders with order-by dates, transfer vouchers before new
-    orders, contractor issue holds, set alerts, BOM fixes, assumptions; the as-of month selector already exists on Home.
-  - BOM fix sheet (start from `core/misses.ratio_gaps` and `sets.calibrate`; add a unit hint for factors beyond 100x);
-    contractor holdings alerts; money layer (rates typed by the visitor plus cost of capital; nothing in rupees without
-    rates).
-  - Set-driven child demand with a leak-free bake-off: adopt per child only if it is no worse. Use expanding ratios
-    `cumsum(child[:t]) / cumsum(parent[:t])`, never the full-period calibration. `planner.forecast` is the shared
-    forecast.
-  - Then an independent review of the lever maths (Opus helper).
 - **Phase 4: data screen.** Upload the 5-CSV pack or one xlsx; a downloadable blank template; a Pass/Warn/Fail
   validator; a fuzzy column mapper (difflib plus synonyms). The uploaded dataset goes in
-  `st.session_state["custom_ds"]`, which `ui/state.choose()` already offers in the sidebar.
+  `st.session_state["custom_ds"]`, which `ui/state.choose()` already offers in the sidebar. Release v1.4.
 - **Phase 5: hardening.**
   - Upload size and row caps, an xlsx zip-size check, read-only openpyxl, defusedxml (already pinned).
   - The BOQ upload in `ui/buylist.py` goes through the same safe reader.
-  - Profile and keep each screen under 2 s warm; a security review.
+  - Profile and keep each screen under 2 s warm; then the Opus security review (ingest, export, caches, markdown).
+- **Phase 6: the private follow-up package** for Rohit, in `F:\ClacuttaAIClub_Hackathon\followup\`, never in this repo.
 
 ## Known quirks
 - Streamlit `AppTest` cannot drive file uploads. Inject a dataset with `at.session_state["custom_ds"] = ds`, then
