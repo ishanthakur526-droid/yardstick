@@ -238,5 +238,10 @@ def _use() -> None:
         )
         return
     st.session_state["custom_ds"] = built
+    # The files as text and the checked tables are not needed once the project is built, and they are big: Lumino's
+    # 231,000-row export holds ~150 MB in them against ~1 MB for the built project. Opening Home also clears the
+    # uploader, so nothing re-reads the files.
+    st.session_state.pop("data_sheets", None)
+    st.session_state.pop("data_report", None)
     st.session_state["dataset"] = state.CUSTOM
     st.session_state["section"] = "Home"

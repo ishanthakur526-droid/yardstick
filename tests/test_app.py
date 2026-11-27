@@ -104,6 +104,11 @@ def test_an_upload_is_checked_then_put_to_use(sample_raw):
     assert_clean(at)
     assert at.session_state["dataset"] == "custom" and at.session_state["section"] == "Home"
     assert "Test upload" in at.caption[0].value
+    assert "data_sheets" not in at.session_state and "data_report" not in at.session_state  # memory: only the project
+    at.session_state["section"] = "Your data"  # back on the screen: the project is in use, nothing is re-read
+    at.run()
+    assert_clean(at)
+    assert [s for s in at.success if "In use" in s.value] and "data_report" not in at.session_state
 
 
 def test_an_upload_that_fails_its_check_cannot_be_used():
